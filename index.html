@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Monitor Solar & Huella de Carbono</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --green-banner: #98b394;
+      --bar-bg: #e2e8f0;
+      --bar-fill: #3e6b48;
+      --text-main: #1e293b;
+      --text-muted: #64748b;
+      --shadow: 0 4px 12px rgba(0,0,0,0.05);
+      --radius: 18px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background-color: var(--bg); color: var(--text-main); padding: 15px; }
+    .container { max-width: 1100px; margin: 0 auto; }
+
+    .header {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .header h1 { font-size: 1.4rem; font-weight: 800; color: #0f172a; }
+    .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    select, button { font-size: 0.88rem; border-radius: 12px; padding: 9px 14px; border: 1px solid #cbd5e1; background: #fff; outline: none; }
+    .btn-mapa { background: #3e6b48; color: #fff; border: none; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+
+    #map-card {
+      display: none;
+      background: #fff;
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      margin-bottom: 20px;
+      box-shadow: var(--shadow);
+      border: 1px solid #e2e8f0;
+    }
+    .map-grid {
+      display: grid;
+      grid-template-columns: 1fr 1.35fr;
+      gap: 18px;
+      align-items: center;
+    }
+    .ficha-info h3 { font-size: 1.05rem; font-weight: 800; color: #1e293b; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+    .ficha-info p { font-size: 0.84rem; color: #475569; margin-bottom: 5px; line-height: 1.35; }
+    .ficha-info strong { color: #0f172a; }
+    #map-view { height: 210px; width: 100%; border-radius: 12px; border: 1px solid #cbd5e1; }
+
+    .grid-top { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 18px; margin-bottom: 20px; }
+    .card-operacion { background: var(--green-banner); border-radius: var(--radius); padding: 12px; display: flex; flex-direction: column; gap: 10px; box-shadow: var(--shadow); }
+    .tabs-header { display: flex; gap: 8px; background: rgba(255,255,255,0.25); padding: 4px; border-radius: 12px; }
+    .tab-btn { flex: 1; padding: 8px; text-align: center; font-weight: 700; border-radius: 10px; border: none; background: transparent; color: #1b3823; }
+    .tab-btn.active { background: #fff; color: #1e293b; box-shadow: 0 2px 4px rgba(0,0,0,0.08); }
+    .sub-card { background: #fff; border-radius: 14px; padding: 16px 18px; position: relative; }
+    .sub-card-title { font-size: 0.88rem; font-weight: 700; color: #334155; }
+    .sub-card-value { font-size: 1.7rem; font-weight: 800; color: #0f172a; position: absolute; right: 18px; top: 14px; }
+    .sub-card-desc { font-size: 0.74rem; color: var(--text-muted); margin: 3px 0 12px 0; }
+    .slider-track { height: 7px; background: var(--bar-bg); border-radius: 4px; position: relative; margin-bottom: 4px; }
+    .slider-fill { height: 100%; background: var(--bar-fill); border-radius: 4px; width: 0%; }
+    .slider-dot { width: 14px; height: 14px; background: #3e6b48; border: 2px solid #fff; border-radius: 50%; position: absolute; top: -3.5px; transform: translateX(-50%); }
+    .slider-labels { display: flex; justify-content: space-between; font-size: 0.68rem; color: var(--text-muted); font-weight: 600; }
+
+    .col-right { display: flex; flex-direction: column; gap: 18px; }
+    .card-white { background: #fff; border-radius: var(--radius); padding: 18px 20px; box-shadow: var(--shadow); border: 1px solid #f1f5f9; }
+    .card-white h3 { font-size: 0.98rem; font-weight: 800; margin-bottom: 14px; }
+    .earths-container { display: flex; justify-content: center; gap: 8px; margin-bottom: 12px; font-size: 1.7rem; }
+    .badge-sol { background: #fef3c7; color: #b45309; border: 1px solid #fde68a; padding: 7px 14px; border-radius: 30px; font-size: 0.84rem; font-weight: 800; text-align: center; margin-bottom: 12px; }
+    .tree-equiv { text-align: center; font-size: 0.8rem; color: #475569; }
+    .tree-equiv strong { display: block; font-size: 1.15rem; font-weight: 800; color: #1e293b; }
+    .co2-big { font-size: 2.5rem; font-weight: 900; color: #0f172a; line-height: 1.1; margin-bottom: 6px; }
+    .co2-big span { font-size: 1rem; font-weight: 600; color: #64748b; }
+    .co2-badge { background: #3e6b48; color: #fff; font-size: 0.75rem; font-weight: 700; padding: 3px 8px; border-radius: 6px; }
+    .co2-calc { font-size: 0.8rem; color: #334155; font-weight: 600; margin-bottom: 4px; }
+    .co2-note { font-size: 0.68rem; color: #94a3b8; line-height: 1.3; }
+
+    .grid-bottom { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-bottom: 20px; }
+    .chart-card { background: #fff; border-radius: var(--radius); padding: 18px; box-shadow: var(--shadow); border: 1px solid #f1f5f9; }
+    .chart-card h4 { font-size: 1.05rem; font-weight: 800; text-align: center; margin-bottom: 12px; color: #1b3823; }
+    .canvas-holder { position: relative; height: 290px; width: 100%; }
+
+    .audit-card {
+      background: #fff;
+      border-radius: var(--radius);
+      padding: 22px 24px;
+      box-shadow: var(--shadow);
+      border: 1px solid #e2e8f0;
+      margin-bottom: 24px;
+    }
+    .audit-card h2 {
+      font-size: 1.25rem;
+      font-weight: 800;
+      color: #1b3823;
+      margin-bottom: 14px;
+    }
+    .audit-filters {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+    .btn-audit {
+      border-radius: 999px;
+      padding: 9px 18px;
+      font-size: 0.86rem;
+      font-weight: 700;
+      cursor: pointer;
+      border: 1.5px solid #98b394;
+      background: #fff;
+      color: #1b3823;
+      transition: all 0.15s ease;
+    }
+    .btn-audit.active {
+      background: #2b4c2f;
+      color: #fff;
+      border-color: #2b4c2f;
+    }
+    .table-scroll {
+      max-height: 310px;
+      overflow-y: auto;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+    }
+    table.audit-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+      text-align: left;
+    }
+    table.audit-table thead th {
+      position: sticky;
+      top: 0;
+      background: #e9f2e8;
+      color: #1b3823;
+      font-weight: 800;
+      padding: 12px 14px;
+      border-bottom: 2px solid #98b394;
+      z-index: 1;
+    }
+    table.audit-table tbody td {
+      padding: 12px 14px;
+      border-bottom: 1px solid #f1f5f9;
+      color: #1e293b;
+    }
+    table.audit-table tbody tr:hover {
+      background: #f8fafc;
+    }
+    .estado-ok { color: #1b4332; font-weight: 700; }
+    .estado-caida { color: #b91c1c; font-weight: 700; }
+
+    @media (max-width: 820px) {
+      .grid-top, .grid-bottom, .map-grid { grid-template-columns: 1fr; }
+      #map-view { height: 170px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <h1 id="titulo-central">Monitor Solar & Huella de Carbono</h1>
+      <div class="header-actions">
+        <select id="select-central" style="max-width: 280px;"></select>
+        <select id="select-periodo">
+          <option value="7">Últimos 7 días</option>
+          <option value="15">Últimos 15 días</option>
+          <option value="30" selected>Últimos 30 días</option>
+        </select>
+        <button class="btn-mapa" onclick="toggleMapa()">🗺️ Ver Mapa y Ficha Geográfica</button>
+      </div>
+    </header>
+
+    <div id="map-card">
+      <div class="map-grid">
+        <div class="ficha-info">
+          <h3>📍 Ficha Geográfica de la Planta</h3>
+          <p><strong>Central:</strong> <span id="f-nombre">-</span></p>
+          <p><strong>Titular:</strong> <span id="f-titular">-</span></p>
+          <p><strong>Tipo de Proyecto:</strong> <span id="f-tipoproyecto">-</span></p>
+          <p><strong>Tipo de Presentación:</strong> <span id="f-presentacion">-</span></p>
+          <p><strong>Potencia Instalada:</strong> <span id="f-mw">0.0 MW</span></p>
+          <p><strong>Ubicación:</strong> <span id="f-comuna">-</span>, <span id="f-region">-</span></p>
+          <p><strong>Coordenadas:</strong> <span id="f-coords">-</span></p>
+        </div>
+        <div id="map-view"></div>
+      </div>
+    </div>
+
+    <!-- Mapa General de Chile con Todos los Proyectos -->
+    <section class="chart-card" style="margin-bottom: 20px;">
+      <h4>🗺️ Mapa General de Proyectos en Chile (Coordenadas SEN & SEIA)</h4>
+      <div class="canvas-holder" style="height: 380px;">
+        <div id="mapa-chile-general" style="height: 100%; width: 100%; border-radius: 12px; border: 1px solid #cbd5e1;"></div>
+      </div>
+    </section>
+
+    <div class="grid-top">
+      <div class="card-operacion">
+        <div class="tabs-header">
+          <button class="tab-btn active">Operación Solar</button>
+          <button class="tab-btn" id="tab-ficha-mw">Ficha Técnica (0.0 MW)</button>
+        </div>
+
+        <div class="sub-card">
+          <span class="sub-card-title">⚡ Energía Total Generada</span>
+          <span class="sub-card-value" id="val-total-mwh">0,0 MWh</span>
+          <div class="sub-card-desc">Rendimiento (Factor de Planta) en el período</div>
+          <div class="slider-track"><div class="slider-fill" id="fill-fp"></div><div class="slider-dot" id="dot-fp"></div></div>
+          <div class="slider-labels"><span>0%</span><span id="lbl-fp">Factor Planta: 0.0%</span><span>100%</span></div>
+        </div>
+
+        <div class="sub-card">
+          <span class="sub-card-title">📈 Pico Máximo Alcanzado</span>
+          <span class="sub-card-value" id="val-pico-mw">0.00 MW</span>
+          <div class="sub-card-desc">% alcanzado respecto a la capacidad instalada</div>
+          <div class="slider-track"><div class="slider-fill" id="fill-pico"></div><div class="slider-dot" id="dot-pico"></div></div>
+          <div class="slider-labels"><span>0 MW</span><span id="lbl-pico-pct">0% de capacidad</span><span id="lbl-max-mw">0.0 MW</span></div>
+        </div>
+
+        <div class="sub-card">
+          <span class="sub-card-title">✅ Horas sin Fallas (Operación Normal)</span>
+          <span class="sub-card-value" id="val-horas-pct">100%</span>
+          <div class="sub-card-desc">Porcentaje de horas funcionando sin caídas a pleno sol</div>
+          <div class="slider-track"><div class="slider-fill" id="fill-horas"></div><div class="slider-dot" id="dot-horas"></div></div>
+          <div class="slider-labels"><span>0%</span><span id="lbl-horas-caida">0 hrs con caída</span><span>100%</span></div>
+        </div>
+      </div>
+
+      <div class="col-right">
+        <div class="card-white">
+          <h3>Potencia Solar & Aporte al Planeta</h3>
+          <div class="earths-container"><span>🌍</span><span>🌍</span><span>🌎</span><span>🌎</span><span>🌏</span></div>
+          <div class="badge-sol">☀️ El Sol emitió hasta <span id="val-max-rad">0</span> W/m²</div>
+          <div class="tree-equiv">La energía limpia producida equivale al carbono que absorben <strong id="val-arboles">🌲 0 árboles en 1 año</strong></div>
+        </div>
+
+        <div class="card-white">
+          <h3>Huella de CO₂ Evitada en el Período</h3>
+          <div class="co2-big" id="val-co2">0,00 <span>tCO₂eq evitadas</span></div>
+          <div class="co2-calc">Cálculo: <span id="calc-mwh">0 MWh</span> × <span class="co2-badge">0.27 tCO₂eq/MWh</span></div>
+          <div class="co2-note">Origen del cálculo: Cada MWh solar evita quemar carbón o gas en el Sistema Eléctrico Nacional (Factor oficial: 0,27 tCO₂/MWh).</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid-bottom">
+      <div class="chart-card">
+        <h4>Correlación Luz Solar vs. Energía Producida</h4>
+        <div class="canvas-holder"><canvas id="chartScatter"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <h4 id="titulo-diario">Producción Diaria (Tope ~20 MWh) vs. Temperatura Base</h4>
+        <div class="canvas-holder"><canvas id="chartDaily"></canvas></div>
+      </div>
+    </div>
+
+    <section class="audit-card">
+      <h2>2. ¿Funcionó bien la planta? Revisión de Horas de Producción y Caídas</h2>
+      <div class="audit-filters">
+        <button id="btn-filtro-normal" class="btn-audit active" onclick="filtrarTabla(false)">
+          ✅ Ver Horas de Mejor Producción (Normal)
+        </button>
+        <button id="btn-filtro-caidas" class="btn-audit" onclick="filtrarTabla(true)">
+          ⚠️ Ver Solo Caídas en Pleno Sol
+        </button>
+      </div>
+      <div class="table-scroll">
+        <table class="audit-table">
+          <thead>
+            <tr>
+              <th>Fecha y Hora</th>
+              <th>Energía Generada (MWh)</th>
+              <th>Luz Solar Recibida (W/m²)</th>
+              <th>Temperatura (°C)</th>
+              <th>Estado de la Planta</th>
+            </tr>
+          </thead>
+          <tbody id="tabla-revision-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    let catalogoGlobal = [], scatterChart = null, dailyChart = null, map = null, marker = null;
+    let mapaChileGeneral = null;
+    let registrosTablaGlobal = [], mostrarSoloCaidas = false;
+
+    async function init() {
+      const res = await fetch('/api/catalogo');
+      catalogoGlobal = await res.json();
+      const sel = document.getElementById('select-central');
+      sel.innerHTML = '';
+      catalogoGlobal.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c.id;
+        opt.textContent = c.label || c.nombre;
+        sel.appendChild(opt);
+      });
+      sel.addEventListener('change', () => cargarDatos());
+      document.getElementById('select-periodo').addEventListener('change', () => cargarDatos());
+      
+      inicializarMapaChile(catalogoGlobal);
+      cargarDatos();
+    }
+
+    async function cargarDatos() {
+      const idCentral = parseInt(document.getElementById('select-central').value) || 0;
+      const dias = parseInt(document.getElementById('select-periodo').value) || 30;
+
+      const res = await fetch('/api/dashboard', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id_central: idCentral, dias: dias })
+      });
+      const data = await res.json();
+      registrosTablaGlobal = data.tabla || [];
+      actualizarUI(data);
+      actualizarMapa(data.planta);
+      renderTabla();
+    }
+
+    function actualizarUI(data) {
+      const p = data.planta, k = data.kpis;
+      document.getElementById('titulo-central').textContent = `Monitor Solar & Huella de Carbono — ${p.nombre}`;
+      document.getElementById('tab-ficha-mw').textContent = `Ficha Técnica (${p.potencia_mw} MW)`;
+
+      document.getElementById('val-total-mwh').textContent = `${k.total_mwh.toLocaleString('es-CL')} MWh`;
+      document.getElementById('lbl-fp').textContent = `Factor Planta: ${k.factor_planta}%`;
+      setSlider('fill-fp', 'dot-fp', k.factor_planta);
+
+      document.getElementById('val-pico-mw').textContent = `${k.pico_max_mw.toFixed(2)} MW`;
+      document.getElementById('lbl-pico-pct').textContent = `${k.pico_pct}% de capacidad`;
+      document.getElementById('lbl-max-mw').textContent = `${p.potencia_mw} MW`;
+      setSlider('fill-pico', 'dot-pico', k.pico_pct);
+
+      document.getElementById('val-horas-pct').textContent = `${k.horas_normales_pct}%`;
+      document.getElementById('lbl-horas-caida').textContent = `${k.horas_caidas} hrs con caída`;
+      setSlider('fill-horas', 'dot-horas', k.horas_normales_pct);
+
+      document.getElementById('val-max-rad').textContent = k.max_rad.toLocaleString('es-CL');
+      document.getElementById('val-arboles').textContent = `🌲 ${k.arboles} árboles en 1 año`;
+      document.getElementById('val-co2').innerHTML = `${k.co2_evitado.toLocaleString('es-CL')} <span>tCO₂eq evitadas</span>`;
+      document.getElementById('calc-mwh').textContent = `${k.total_mwh.toLocaleString('es-CL')} MWh`;
+
+      document.getElementById('f-nombre').textContent = p.nombre;
+      document.getElementById('f-titular').textContent = p.titular || 'Titular SEA';
+      document.getElementById('f-tipoproyecto').textContent = p.tipo_proyecto || 'Parque Fotovoltaico';
+      document.getElementById('f-presentacion').textContent = p.tipo_presentacion || 'DIA';
+      document.getElementById('f-mw').textContent = `${p.potencia_mw} MW`;
+      document.getElementById('f-comuna').textContent = p.comuna || 'Chile';
+      document.getElementById('f-region').textContent = p.region || 'Chile';
+      document.getElementById('f-coords').textContent = `${Number(p.lat).toFixed(5)}, ${Number(p.lon).toFixed(5)}`;
+
+      renderScatter(data.dispersion);
+      renderDaily(data.diario);
+    }
+
+    function inicializarMapaChile(catalogo) {
+      if (mapaChileGeneral) return;
+      mapaChileGeneral = L.map('mapa-chile-general').setView([-33.4489, -70.6693], 6);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(mapaChileGeneral);
+
+      catalogo.forEach(c => {
+        if (c.lat && c.lon) {
+          const marker = L.marker([c.lat, c.lon]).addTo(mapaChileGeneral);
+          marker.bindPopup(`
+            <div style="font-size: 0.85rem;">
+              <b>${c.nombre}</b><br>
+              <strong>Potencia:</strong> ${c.potencia_mw} MW<br>
+              <strong>Ubicación:</strong> ${c.comuna}, ${c.region || 'Chile'}<br>
+              <strong>Coordenadas:</strong> ${c.lat}, ${c.lon}<br>
+              <button onclick="cambiarCentralYCargar(${c.id})" style="margin-top:6px; background:#3e6b48; color:#fff; border:none; padding:4px 8px; border-radius:6px; cursor:pointer;">Ver Dashboard</button>
+            </div>
+          `);
+        }
+      });
+    }
+
+    function cambiarCentralYCargar(id) {
+      document.getElementById('select-central').value = id;
+      cargarDatos();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function filtrarTabla(soloCaidas) {
+      mostrarSoloCaidas = soloCaidas;
+      document.getElementById('btn-filtro-normal').classList.toggle('active', !soloCaidas);
+      document.getElementById('btn-filtro-caidas').classList.toggle('active', soloCaidas);
+      renderTabla();
+    }
+
+    function renderTabla() {
+      const tbody = document.getElementById('tabla-revision-body');
+      tbody.innerHTML = '';
+
+      const filas = registrosTablaGlobal.filter(r => mostrarSoloCaidas ? r.caida : !r.caida);
+
+      if (filas.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding: 18px; color:#64748b;">No se registraron ${mostrarSoloCaidas ? 'caídas en pleno sol' : 'horas de producción'} en este período.</td></tr>`;
+        return;
+      }
+
+      filas.forEach(r => {
+        const tr = document.createElement('tr');
+        const estadoHtml = r.caida
+          ? `<span class="estado-caida">⚠️ Caída en Pleno Sol</span>`
+          : `<span class="estado-ok">✅ Operación Normal</span>`;
+
+        tr.innerHTML = `
+          <td>${r.fecha}</td>
+          <td><strong>${r.mwh.toFixed(2)} MWh</strong></td>
+          <td>${r.rad} W/m²</td>
+          <td>${r.temp.toFixed(1)} °C</td>
+          <td>${estadoHtml}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function setSlider(f, d, pct) {
+      const v = Math.min(Math.max(pct, 0), 100);
+      document.getElementById(f).style.width = `${v}%`;
+      document.getElementById(d).style.left = `${v}%`;
+    }
+
+    function toggleMapa() {
+      const card = document.getElementById('map-card');
+      card.style.display = card.style.display === 'block' ? 'none' : 'block';
+      if (card.style.display === 'block' && map) {
+        setTimeout(() => map.invalidateSize(), 150);
+      }
+    }
+
+    function actualizarMapa(p) {
+      if (!map) {
+        map = L.map('map-view').setView([p.lat, p.lon], 12);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(map);
+        marker = L.marker([p.lat, p.lon]).addTo(map);
+      } else {
+        map.setView([p.lat, p.lon], 12);
+        marker.setLatLng([p.lat, p.lon]);
+      }
+      marker.bindPopup(`<b>${p.nombre}</b><br>${p.titular || 'Titular'}<br>${p.comuna}, ${p.region}`).openPopup();
+    }
+
+    function renderScatter(points) {
+      const ctx = document.getElementById('chartScatter').getContext('2d');
+      if (scatterChart) scatterChart.destroy();
+
+      const normales = points.filter(p => !p.caida).map(p => ({ x: p.rad, y: p.mwh }));
+      const caidas = points.filter(p => p.caida).map(p => ({ x: p.rad, y: p.mwh }));
+
+      let lineaCorrelacion = [];
+      if (normales.length >= 2) {
+        const n = normales.length;
+        const sumX = normales.reduce((acc, p) => acc + p.x, 0);
+        const sumY = normales.reduce((acc, p) => acc + p.y, 0);
+        const sumXY = normales.reduce((acc, p) => acc + p.x * p.y, 0);
+        const sumXX = normales.reduce((acc, p) => acc + p.x * p.x, 0);
+        const slope = (n * sumXY - sumX * sumY) / Math.max(n * sumXX - sumX * sumX, 1e-6);
+        const intercept = (sumY - slope * sumX) / n;
+
+        const minX = Math.min(...normales.map(p => p.x));
+        const maxX = Math.max(...normales.map(p => p.x));
+        lineaCorrelacion = [
+          { x: minX, y: Math.max(0, +(slope * minX + intercept).toFixed(2)) },
+          { x: maxX, y: Math.max(0, +(slope * maxX + intercept).toFixed(2)) }
+        ];
+      }
+
+      scatterChart = new Chart(ctx, {
+        type: 'scatter',
+        data: {
+          datasets: [
+            {
+              label: 'Operación Normal',
+              data: normales,
+              backgroundColor: 'rgba(67, 104, 62, 0.88)',
+              borderColor: '#2d4c2b',
+              borderWidth: 0.8,
+              pointRadius: 4.2,
+              pointHoverRadius: 6,
+              order: 2
+            },
+            {
+              label: 'Caída en Pleno Sol',
+              data: caidas,
+              backgroundColor: '#dc2626',
+              borderColor: '#991b1b',
+              borderWidth: 1,
+              pointRadius: 5,
+              pointHoverRadius: 7,
+              order: 1
+            },
+            {
+              type: 'line',
+              label: 'Línea de Correlación',
+              data: lineaCorrelacion,
+              borderColor: '#d97706',
+              backgroundColor: '#d97706',
+              borderWidth: 2.8,
+              pointRadius: 0,
+              fill: false,
+              tension: 0,
+              order: 0
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            x: {
+              title: { display: true, text: 'Luz Solar (W/m²)', font: { weight: '600', size: 12 } },
+              grid: { color: '#f1f5f9' }
+            },
+            y: {
+              title: { display: true, text: 'Energía (MWh)', font: { weight: '600', size: 12 } },
+              beginAtZero: true,
+              grid: { color: '#e2e8f0' }
+            }
+          },
+          plugins: {
+            legend: {
+              display: true,
+              position: 'bottom',
+              labels: { usePointStyle: true, padding: 16, font: { size: 11 } }
+            }
+          }
+        }
+      });
+    }
+
+    function renderDaily(diario) {
+      const ctx = document.getElementById('chartDaily').getContext('2d');
+      if (dailyChart) dailyChart.destroy();
+
+      const n = diario.fechas.length;
+      const topeDiario = diario.tope_diario || 20;
+      const tempBase = diario.temp_base !== undefined ? diario.temp_base : 26.5;
+
+      document.getElementById('titulo-diario').textContent =
+        `Producción Diaria (Tope ~${topeDiario} MWh) vs. Temperatura Base`;
+
+      const meses = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+      const labels = diario.fechas.map(f => {
+        const [, m, d] = f.split('-');
+        return `${meses[parseInt(m, 10) - 1]} ${parseInt(d, 10)}`;
+      });
+
+      const minTemp = Math.floor(Math.min(...diario.temp, tempBase) - 2);
+      const maxTemp = Math.ceil(Math.max(...diario.temp, tempBase) + 2);
+
+      dailyChart = new Chart(ctx, {
+        data: {
+          labels: labels,
+          datasets: [
+            {
+              type: 'bar',
+              label: 'Energía Diaria (MWh)',
+              data: diario.mwh,
+              backgroundColor: '#6f9c6b',
+              hoverBackgroundColor: '#588157',
+              borderRadius: 2,
+              barPercentage: 0.78,
+              categoryPercentage: 0.86,
+              yAxisID: 'y',
+              order: 3
+            },
+            {
+              type: 'line',
+              label: `Tope Diario (~${topeDiario} MWh)`,
+              data: Array(n).fill(topeDiario),
+              borderColor: '#111827',
+              borderWidth: 1.8,
+              borderDash: [2, 3],
+              pointRadius: 0,
+              fill: false,
+              yAxisID: 'y',
+              order: 2
+            },
+            {
+              type: 'line',
+              label: 'Temp. Máx (°C)',
+              data: diario.temp,
+              borderColor: '#e04f16',
+              backgroundColor: '#e04f16',
+              borderWidth: 2.2,
+              tension: 0.2,
+              pointRadius: 3.5,
+              pointBackgroundColor: '#e04f16',
+              yAxisID: 'y1',
+              order: 0
+            },
+            {
+              type: 'line',
+              label: `Temp. Base (${tempBase}°C)`,
+              data: Array(n).fill(tempBase),
+              borderColor: '#c2811a',
+              borderWidth: 1.8,
+              borderDash: [6, 6],
+              pointRadius: 0,
+              fill: false,
+              yAxisID: 'y1',
+              order: 1
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            x: {
+              grid: { display: false },
+              ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 6, font: { size: 11 } }
+            },
+            y: {
+              type: 'linear',
+              position: 'left',
+              beginAtZero: true,
+              title: { display: true, text: 'Energía Diaria (MWh)', font: { weight: '600', size: 11 } },
+              grid: { color: '#f1f5f9' }
+            },
+            y1: {
+              type: 'linear',
+              position: 'right',
+              min: minTemp,
+              max: maxTemp,
+              grid: { drawOnChartArea: false },
+              title: { display: true, text: 'Temperatura (°C)', font: { weight: '600', size: 11 } }
+            }
+          },
+          plugins: {
+            legend: {
+              display: true,
+              position: 'bottom',
+              labels: { padding: 12, font: { size: 11 }, boxWidth: 14 }
+            }
+          }
+        }
+      });
+    }
+
+    window.onload = init;
+  </script>
+</body>
+</html>

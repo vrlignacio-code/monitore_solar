@@ -28,6 +28,10 @@ INDEX_FILE = os.path.join(STATIC_DIR, "index.html")
 if os.path.exists(STATIC_DIR):
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
+# Caché en memoria para evitar leer y parsear catalogo_completo.json en cada petición
+_CATALOGO_CACHE: list[dict] | None = None
+_CATALOGO_POR_ID: dict[int, dict] = {}
+
 
 class DashboardRequest(BaseModel):
     id_central: int = 0
@@ -35,13 +39,29 @@ class DashboardRequest(BaseModel):
 
 
 def cargar_catalogo() -> list[dict]:
+    global _CATALOGO_CACHE, _CATALOGO_POR_ID
+    if _CATALOGO_CACHE is not None:
+        return _CATALOGO_CACHE
+
     if not os.path.exists(CATALOGO_FILE):
         raise HTTPException(status_code=404, detail="catalogo_completo.json no encontrado.")
     with open(CATALOGO_FILE, "r", encoding="utf-8") as f:
         data = json.load(f)
     if not isinstance(data, list) or not data:
         raise HTTPException(status_code=404, detail="catalogo_completo.json está vacío o inválido.")
-    return data
+
+    _CATALOGO_CACHE = data
+    _CATALOGO_POR_ID = {
+        int(item["id"]): item
+        for item in data
+        if isinstance(item, dict) and "id" in item
+    }
+    return _CATALOGO_CACHE
+
+
+def obtener_planta(id_central: int) -> dict:
+    catalogo = cargar_catalogo()
+    return _CATALOGO_POR_ID.get(int(id_central), catalogo[0])
 
 
 @app.get("/")
@@ -75,9 +95,7 @@ def limpiar_nombre_planta(nombre: str) -> str:
 
 @app.post("/api/dashboard")
 async def get_dashboard_data(req: DashboardRequest):
-    catalogo = cargar_catalogo()
-
-    planta = next((c for c in catalogo if c.get("id") == req.id_central), catalogo[0])
+    planta = obtener_planta(req.id_central)
     potencia_mw = float(planta.get("potencia_mw") or 9.0)
     lat = float(str(planta.get("lat", -35.56794)).replace(",", "."))
     lon = float(str(planta.get("lon", -71.72309)).replace(",", "."))

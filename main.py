@@ -18,7 +18,7 @@ FACTOR_EMISION_SEN = 0.27  # tCO2eq / MWh
 SEN_URL = "https://sipub.api.coordinador.cl/generacion-real/v3/findByDate"
 OPEN_METEO_URL = "https://archive-api.open-meteo.com/v1/archive"
 CATALOGO_FILE = os.path.join(APP_DIR, "catalogo_completo.json")
-SEN_API_KEY = os.getenv("SEN_API_KEY", "bf6f7bb81cd2998ac667dc05e7d80463").strip()
+SEN_API_KEY = os.getenv("SEN_API_KEY", "dba09ada015dc8f3066584a33b30e0e7").strip()
 
 app = FastAPI(title="Monitor Solar SEN & Open-Meteo")
 

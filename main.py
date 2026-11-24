@@ -9,7 +9,7 @@ import httpx
 import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -22,8 +22,11 @@ SEN_API_KEY = os.getenv("SEN_API_KEY", "bf6f7bb81cd2998ac667dc05e7d80463").strip
 
 app = FastAPI(title="Monitor Solar SEN & Open-Meteo")
 
-if os.path.exists(os.path.join(APP_DIR, "static")):
-    app.mount("/static", StaticFiles(directory=os.path.join(APP_DIR, "static")), name="static")
+STATIC_DIR = os.path.join(APP_DIR, "static")
+INDEX_FILE = os.path.join(STATIC_DIR, "index.html")
+
+if os.path.exists(STATIC_DIR):
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 class DashboardRequest(BaseModel):
@@ -31,17 +34,33 @@ class DashboardRequest(BaseModel):
     dias: int = 30
 
 
+def cargar_catalogo() -> list[dict]:
+    if not os.path.exists(CATALOGO_FILE):
+        raise HTTPException(status_code=404, detail="catalogo_completo.json no encontrado.")
+    with open(CATALOGO_FILE, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, list) or not data:
+        raise HTTPException(status_code=404, detail="catalogo_completo.json está vacío o inválido.")
+    return data
+
+
 @app.get("/")
 async def root():
-    return FileResponse(os.path.join(APP_DIR, "static", "index.html"))
+    if not os.path.exists(INDEX_FILE):
+        raise HTTPException(status_code=404, detail="static/index.html no encontrado.")
+    return FileResponse(INDEX_FILE)
+
+
+@app.head("/")
+async def root_head():
+    if not os.path.exists(INDEX_FILE):
+        return Response(status_code=404)
+    return Response(status_code=200)
 
 
 @app.get("/api/catalogo")
 async def get_catalogo():
-    if not os.path.exists(CATALOGO_FILE):
-        raise HTTPException(status_code=404, detail="catalogo_completo.json no encontrado.")
-    with open(CATALOGO_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+    return cargar_catalogo()
 
 
 def limpiar_nombre_planta(nombre: str) -> str:
@@ -56,10 +75,9 @@ def limpiar_nombre_planta(nombre: str) -> str:
 
 @app.post("/api/dashboard")
 async def get_dashboard_data(req: DashboardRequest):
-    with open(CATALOGO_FILE, "r", encoding="utf-8") as f:
-        catalogo = json.load(f)
+    catalogo = cargar_catalogo()
 
-    planta = next((c for c in catalogo if c["id"] == req.id_central), catalogo[0])
+    planta = next((c for c in catalogo if c.get("id") == req.id_central), catalogo[0])
     potencia_mw = float(planta.get("potencia_mw") or 9.0)
     lat = float(str(planta.get("lat", -35.56794)).replace(",", "."))
     lon = float(str(planta.get("lon", -71.72309)).replace(",", "."))
@@ -92,7 +110,7 @@ async def get_dashboard_data(req: DashboardRequest):
                 raw_time = d_m["hourly"]["time"]
                 raw_rad = d_m["hourly"].get("shortwave_radiation", [])
                 raw_temp = d_m["hourly"].get("temperature_2m", [])
-                
+
                 df_clima = pd.DataFrame({
                     "fecha_hora": pd.to_datetime(raw_time).tz_localize(None),
                     "rad": pd.to_numeric(pd.Series(raw_rad), errors="coerce").fillna(0.0).to_numpy(),
@@ -109,7 +127,7 @@ async def get_dashboard_data(req: DashboardRequest):
         df_clima = pd.DataFrame({"fecha_hora": tiempos, "rad": rad_sim.clip(0, 1050), "temp": np.round(temp_sim, 1)})
 
     df_sen = pd.DataFrame()
-    nombre_especifico = limpiar_nombre_planta(planta["nombre"])
+    nombre_especifico = limpiar_nombre_planta(str(planta.get("nombre", "")))
 
     headers = {"accept": "application/json", "user_key": SEN_API_KEY}
     params = {
@@ -160,7 +178,7 @@ async def get_dashboard_data(req: DashboardRequest):
     except Exception as e:
         print(f"[INFO] API SEN consulta: {e}")
 
-    rng = np.random.default_rng(seed=int(planta["id"]) * 100 + dias)
+    rng = np.random.default_rng(seed=int(planta.get("id", 0)) * 100 + dias)
     eficiencia_planta = rng.uniform(0.76, 0.86)
 
     if not df_sen.empty:

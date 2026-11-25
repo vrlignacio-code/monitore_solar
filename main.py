@@ -18,7 +18,17 @@ FACTOR_EMISION_SEN = 0.27  # tCO2eq / MWh
 SEN_URL = "https://sipub.api.coordinador.cl/generacion-real/v3/findByDate"
 OPEN_METEO_URL = "https://archive-api.open-meteo.com/v1/archive"
 CATALOGO_FILE = os.path.join(APP_DIR, "catalogo_completo.json")
-SEN_API_KEY = os.getenv("SEN_API_KEY", "dba09ada015dc8f3066584a33b30e0e7").strip()
+
+# Respaldo opcional solo si SEN_API_KEY no está definida en Environment de Render
+DEFAULT_SEN_API_KEY = "dba09ada015dc8f3066584a33b30e0e7"
+
+
+def obtener_sen_api_key() -> str:
+    env_key = os.getenv("SEN_API_KEY")
+    if env_key is not None and env_key.strip():
+        return env_key.strip()
+    return DEFAULT_SEN_API_KEY.strip()
+
 
 app = FastAPI(title="Monitor Solar SEN & Open-Meteo")
 
@@ -146,12 +156,13 @@ async def get_dashboard_data(req: DashboardRequest):
 
     df_sen = pd.DataFrame()
     nombre_especifico = limpiar_nombre_planta(str(planta.get("nombre", "")))
+    sen_api_key = obtener_sen_api_key()
 
-    headers = {"accept": "application/json", "user_key": SEN_API_KEY}
+    headers = {"accept": "application/json", "user_key": sen_api_key}
     params = {
         "startDate": f_ini,
         "endDate": f_fin,
-        "user_key": SEN_API_KEY,
+        "user_key": sen_api_key,
         "pageSize": 5000,
     }
     if planta.get("id_sen"):

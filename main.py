@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+import math
 import os
+import random
 import re
-from datetime import date, timedelta
+from collections import defaultdict
+from datetime import date, datetime, timedelta
 
 import httpx
-import numpy as np
-import pandas as pd
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -103,16 +104,80 @@ def limpiar_nombre_planta(nombre: str) -> str:
     return limpio or nombre.upper().strip()
 
 
+def _to_float(val, default: float | None = None) -> float | None:
+    if val is None or isinstance(val, bool):
+        return default
+    try:
+        num = float(str(val).replace(",", ".").strip())
+        if math.isnan(num) or math.isinf(num):
+            return default
+        return num
+    except (ValueError, TypeError):
+        return default
+
+
+def _parse_iso_hour(raw_str: str) -> datetime | None:
+    if not raw_str:
+        return None
+    s = str(raw_str).strip()
+    if "T" in s and len(s) >= 16:
+        s = s[:16]
+    elif " " in s and len(s) >= 16:
+        s = s[:16].replace(" ", "T")
+    try:
+        dt = datetime.fromisoformat(s)
+        return dt.replace(tzinfo=None, minute=0, second=0, microsecond=0)
+    except ValueError:
+        return None
+
+
+def _parse_sen_fecha(raw_val) -> datetime | None:
+    if not raw_val:
+        return None
+    s = str(raw_val).strip()
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y"):
+        try:
+            dt = datetime.strptime(s[:19], fmt)
+            return dt.replace(tzinfo=None)
+        except ValueError:
+            continue
+    try:
+        dt = datetime.fromisoformat(s[:19])
+        return dt.replace(tzinfo=None)
+    except ValueError:
+        return None
+
+
+def _construir_clima_simulado(f_ini_dt: date, dias: int) -> list[dict]:
+    filas: list[dict] = []
+    start_dt = datetime(f_ini_dt.year, f_ini_dt.month, f_ini_dt.day, 0, 0)
+    total_horas = dias * 24
+    for i in range(total_horas):
+        dt = start_dt + timedelta(hours=i)
+        h = dt.hour
+        if 7 <= h <= 19:
+            rad = 900.0 * math.sin(((h - 7) / 12.0) * math.pi)
+            rad = max(0.0, min(1050.0, rad))
+        else:
+            rad = 0.0
+        temp = 14.0 + 11.0 * math.sin(((h - 6) / 24.0) * 2.0 * math.pi)
+        filas.append({"dt": dt, "rad": rad, "temp": round(temp, 1)})
+    return filas
+
+
 @app.post("/api/dashboard")
 async def get_dashboard_data(req: DashboardRequest):
     planta = obtener_planta(req.id_central)
-    potencia_mw = float(planta.get("potencia_mw") or 9.0)
-    lat = float(str(planta.get("lat", -35.56794)).replace(",", "."))
-    lon = float(str(planta.get("lon", -71.72309)).replace(",", "."))
+    potencia_mw = _to_float(planta.get("potencia_mw"), 9.0) or 9.0
+    if potencia_mw <= 0:
+        potencia_mw = 9.0
 
-    if not (-56.0 <= lat <= -17.0):
+    lat = _to_float(planta.get("lat"), -35.56794)
+    lon = _to_float(planta.get("lon"), -71.72309)
+
+    if lat is None or not (-56.0 <= lat <= -17.0):
         lat = -35.56794
-    if not (-76.0 <= lon <= -66.0):
+    if lon is None or not (-76.0 <= lon <= -66.0):
         lon = -71.72309
 
     dias = req.dias if req.dias in (7, 15, 30) else 30
@@ -121,7 +186,7 @@ async def get_dashboard_data(req: DashboardRequest):
     f_ini_dt = f_fin_dt - timedelta(days=dias - 1)
     f_ini, f_fin = f_ini_dt.isoformat(), f_fin_dt.isoformat()
 
-    df_clima = pd.DataFrame()
+    clima_por_hora: dict[datetime, dict] = {}
     try:
         params_meteo = {
             "latitude": lat,
@@ -133,28 +198,49 @@ async def get_dashboard_data(req: DashboardRequest):
         }
         async with httpx.AsyncClient(timeout=25, verify=False) as client:
             res_m = await client.get(OPEN_METEO_URL, params=params_meteo)
-            d_m = res_m.json()
-            if "hourly" in d_m and "time" in d_m["hourly"]:
-                raw_time = d_m["hourly"]["time"]
-                raw_rad = d_m["hourly"].get("shortwave_radiation", [])
-                raw_temp = d_m["hourly"].get("temperature_2m", [])
+            if res_m.status_code == 200:
+                d_m = res_m.json()
+                hourly = d_m.get("hourly") if isinstance(d_m, dict) else None
+                if isinstance(hourly, dict) and "time" in hourly:
+                    raw_times = hourly.get("time") or []
+                    raw_rads = hourly.get("shortwave_radiation") or []
+                    raw_temps = hourly.get("temperature_2m") or []
 
-                df_clima = pd.DataFrame({
-                    "fecha_hora": pd.to_datetime(raw_time).tz_localize(None),
-                    "rad": pd.to_numeric(pd.Series(raw_rad), errors="coerce").fillna(0.0).to_numpy(),
-                    "temp": pd.to_numeric(pd.Series(raw_temp), errors="coerce").ffill().bfill().fillna(20.0).to_numpy(),
-                })
+                    temps_limpias: list[float] = []
+                    ultimo_temp: float | None = None
+                    for t_raw in raw_temps:
+                        val_t = _to_float(t_raw)
+                        if val_t is not None:
+                            ultimo_temp = val_t
+                        temps_limpias.append(val_t if val_t is not None else -999.0)
+
+                    # Relleno hacia adelante y atrás (ffill / bfill) igual que pandas
+                    primer_valido = next((x for x in temps_limpias if x != -999.0), 20.0)
+                    actual = primer_valido
+                    for idx, val_t in enumerate(temps_limpias):
+                        if val_t == -999.0:
+                            temps_limpias[idx] = actual
+                        else:
+                            actual = val_t
+
+                    for idx, t_str in enumerate(raw_times):
+                        dt = _parse_iso_hour(t_str)
+                        if dt is None:
+                            continue
+                        rad_val = _to_float(raw_rads[idx] if idx < len(raw_rads) else 0.0, 0.0) or 0.0
+                        if rad_val < 0.0:
+                            rad_val = 0.0
+                        temp_val = temps_limpias[idx] if idx < len(temps_limpias) else 20.0
+                        clima_por_hora[dt] = {"dt": dt, "rad": rad_val, "temp": temp_val}
     except Exception as e:
         print(f"[WARN] Error Open-Meteo: {e}")
 
-    if df_clima.empty:
-        tiempos = pd.date_range(start=f_ini, end=pd.to_datetime(f_fin) + timedelta(days=1), freq="h")[:-1]
-        horas_dia = tiempos.hour.to_numpy()
-        rad_sim = np.where((horas_dia >= 7) & (horas_dia <= 19), 900 * np.sin((horas_dia - 7) / 12 * np.pi), 0.0)
-        temp_sim = 14.0 + 11.0 * np.sin((horas_dia - 6) / 24 * 2 * np.pi)
-        df_clima = pd.DataFrame({"fecha_hora": tiempos, "rad": rad_sim.clip(0, 1050), "temp": np.round(temp_sim, 1)})
+    if clima_por_hora:
+        filas_clima = [clima_por_hora[k] for k in sorted(clima_por_hora.keys())]
+    else:
+        filas_clima = _construir_clima_simulado(f_ini_dt, dias)
 
-    df_sen = pd.DataFrame()
+    sen_por_hora: dict[datetime, float] = {}
     nombre_especifico = limpiar_nombre_planta(str(planta.get("nombre", "")))
     sen_api_key = obtener_sen_api_key()
 
@@ -175,92 +261,183 @@ async def get_dashboard_data(req: DashboardRequest):
             res_sen = await client.get(SEN_URL, params=params, headers=headers)
             if res_sen.status_code == 200:
                 data_sen = res_sen.json().get("data", [])
-                if data_sen:
-                    df_temp = pd.DataFrame(data_sen)
+                if isinstance(data_sen, list) and data_sen:
+                    keys_sample = list(data_sen[0].keys()) if isinstance(data_sen[0], dict) else []
+                    col_nom = next((c for c in keys_sample if "central" in c.lower() or "nombre" in c.lower()), None)
+                    col_fecha = next((c for c in keys_sample if "fecha" in c.lower()), None)
+                    col_hora_num = next((c for c in keys_sample if c.lower() in ("hora_opreal", "hora")), None)
+                    col_gen = next(
+                        (c for c in keys_sample if "gen" in c.lower() or "mwh" in c.lower() or "mw" in c.lower()),
+                        None,
+                    )
 
-                    col_nom = next((c for c in df_temp.columns if "central" in c.lower() or "nombre" in c.lower()), None)
-                    if col_nom and df_temp[col_nom].nunique() > 1:
-                        central_elegida = df_temp[col_nom].iloc[0]
-                        df_temp = df_temp[df_temp[col_nom] == central_elegida].copy()
-
-                    col_fecha = next((c for c in df_temp.columns if "fecha" in c.lower()), None)
-                    col_hora_num = next((c for c in df_temp.columns if c.lower() in ("hora_opreal", "hora")), None)
-                    col_gen = next((c for c in df_temp.columns if "gen" in c.lower() or "mwh" in c.lower() or "mw" in c.lower()), None)
+                    central_elegida = None
+                    if col_nom:
+                        unicos = []
+                        for row in data_sen:
+                            if isinstance(row, dict) and row.get(col_nom) not in unicos:
+                                unicos.append(row.get(col_nom))
+                        if len(unicos) > 1 and unicos:
+                            central_elegida = unicos[0]
 
                     if col_fecha and col_gen:
-                        base_dt = pd.to_datetime(df_temp[col_fecha]).dt.tz_localize(None)
-                        if col_hora_num and col_hora_num != col_fecha:
-                            horas_offset = pd.to_numeric(pd.Series(df_temp[col_hora_num]), errors="coerce").fillna(1).astype(int) - 1
-                            df_temp["fecha_hora"] = base_dt.dt.floor("D") + pd.to_timedelta(horas_offset, unit="h")
-                        else:
-                            df_temp["fecha_hora"] = base_dt
+                        agrupado_sen: dict[datetime, float] = defaultdict(float)
+                        for row in data_sen:
+                            if not isinstance(row, dict):
+                                continue
+                            if central_elegida is not None and row.get(col_nom) != central_elegida:
+                                continue
+                            base_dt = _parse_sen_fecha(row.get(col_fecha))
+                            if base_dt is None:
+                                continue
+                            if col_hora_num and col_hora_num != col_fecha:
+                                h_num = _to_float(row.get(col_hora_num), 1.0)
+                                horas_offset = int(h_num if h_num is not None else 1.0) - 1
+                                fh = base_dt.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(
+                                    hours=horas_offset
+                                )
+                            else:
+                                fh = base_dt.replace(minute=0, second=0, microsecond=0)
 
-                        df_temp["mwh_real"] = pd.to_numeric(pd.Series(df_temp[col_gen]), errors="coerce").fillna(0.0).clip(lower=0.0)
-                        df_sen = df_temp.groupby("fecha_hora", as_index=False).agg({"mwh_real": "sum"})
+                            gen_val = _to_float(row.get(col_gen), 0.0) or 0.0
+                            if gen_val < 0.0:
+                                gen_val = 0.0
+                            agrupado_sen[fh] += gen_val
 
-                        if (df_sen["mwh_real"] > 0).sum() < (dias * 4):
-                            df_sen = pd.DataFrame()
-                        else:
-                            max_sen = df_sen["mwh_real"].max()
-                            if max_sen > potencia_mw * 1.15:
-                                df_sen["mwh_real"] = (df_sen["mwh_real"] / max_sen) * (potencia_mw * 0.92)
+                        horas_positivas = sum(1 for v in agrupado_sen.values() if v > 0.0)
+                        if horas_positivas >= (dias * 4) and agrupado_sen:
+                            max_sen = max(agrupado_sen.values())
+                            escala = (potencia_mw * 0.92) / max_sen if max_sen > potencia_mw * 1.15 else 1.0
+                            for fh, val in agrupado_sen.items():
+                                sen_por_hora[fh] = val * escala
     except Exception as e:
         print(f"[INFO] API SEN consulta: {e}")
 
-    rng = np.random.default_rng(seed=int(planta.get("id", 0)) * 100 + dias)
+    rng = random.Random(int(_to_float(planta.get("id"), 0.0) or 0.0) * 100 + dias)
     eficiencia_planta = rng.uniform(0.76, 0.86)
 
-    if not df_sen.empty:
-        df_final = pd.merge(df_clima, df_sen, on="fecha_hora", how="left").fillna({"mwh_real": 0.0})
-        df_final["mwh"] = df_final["mwh_real"].clip(upper=potencia_mw)
+    filas_finales: list[dict] = []
+    if sen_por_hora:
+        for item in filas_clima:
+            dt = item["dt"]
+            rad = item["rad"]
+            temp = item["temp"]
+            mwh_real = sen_por_hora.get(dt, 0.0)
+            mwh = min(max(0.0, mwh_real), potencia_mw)
+            caida = (rad > 480.0) and (mwh < (potencia_mw * 0.18))
+            estado = "Caída en Pleno Sol" if caida else "Operación Normal"
+            filas_finales.append(
+                {
+                    "dt": dt,
+                    "dia": dt.strftime("%Y-%m-%d"),
+                    "rad": rad,
+                    "temp": temp,
+                    "mwh": mwh,
+                    "caida": caida,
+                    "estado": estado,
+                }
+            )
     else:
-        df_final = df_clima.copy()
-        coef_termico = 1.0 - 0.004 * (df_final["temp"] - 25.0).clip(lower=0.0)
-        ruido_operacional = rng.uniform(0.92, 1.03, size=len(df_final))
-        df_final["mwh"] = ((df_final["rad"] / 1000.0) * potencia_mw * eficiencia_planta * coef_termico * ruido_operacional).clip(
-            lower=0.0, upper=potencia_mw
-        )
-        indices_pleno_sol = df_final[df_final["rad"] > 520].index.to_numpy()
-        if len(indices_pleno_sol) > 0:
+        for item in filas_clima:
+            dt = item["dt"]
+            rad = item["rad"]
+            temp = item["temp"]
+            exceso_temp = max(0.0, temp - 25.0)
+            coef_termico = 1.0 - 0.004 * exceso_temp
+            ruido_operacional = rng.uniform(0.92, 1.03)
+            mwh = (rad / 1000.0) * potencia_mw * eficiencia_planta * coef_termico * ruido_operacional
+            mwh = min(max(0.0, mwh), potencia_mw)
+            filas_finales.append(
+                {
+                    "dt": dt,
+                    "dia": dt.strftime("%Y-%m-%d"),
+                    "rad": rad,
+                    "temp": temp,
+                    "mwh": mwh,
+                    "caida": False,
+                    "estado": "Operación Normal",
+                }
+            )
+
+        indices_pleno_sol = [idx for idx, f in enumerate(filas_finales) if f["rad"] > 520.0]
+        if indices_pleno_sol:
             n_caidas = max(1, int(len(indices_pleno_sol) * rng.uniform(0.02, 0.07)))
-            idx_caidas = rng.choice(indices_pleno_sol, size=min(n_caidas, len(indices_pleno_sol)), replace=False)
-            df_final.loc[idx_caidas, "mwh"] = rng.uniform(0.0, potencia_mw * 0.12, size=len(idx_caidas))
+            n_caidas = min(n_caidas, len(indices_pleno_sol))
+            for idx in rng.sample(indices_pleno_sol, k=n_caidas):
+                filas_finales[idx]["mwh"] = rng.uniform(0.0, potencia_mw * 0.12)
 
-    df_final["caida"] = (df_final["rad"] > 480) & (df_final["mwh"] < (potencia_mw * 0.18))
-    df_final["estado"] = np.where(df_final["caida"], "Caída en Pleno Sol", "Operación Normal")
+        for f in filas_finales:
+            caida = (f["rad"] > 480.0) and (f["mwh"] < (potencia_mw * 0.18))
+            f["caida"] = caida
+            f["estado"] = "Caída en Pleno Sol" if caida else "Operación Normal"
 
-    total_mwh = float(df_final["mwh"].sum())
-    pico_max_mw = float(df_final["mwh"].max())
-    max_rad = float(df_final["rad"].max())
-    horas_totales = max(len(df_final), 1)
-    horas_sol = int((df_final["rad"] > 50).sum()) or 1
-    horas_caidas = int(df_final["caida"].sum())
+    total_mwh = sum(f["mwh"] for f in filas_finales)
+    pico_max_mw = max((f["mwh"] for f in filas_finales), default=0.0)
+    max_rad = max((f["rad"] for f in filas_finales), default=0.0)
+    horas_totales = max(len(filas_finales), 1)
+    horas_sol = sum(1 for f in filas_finales if f["rad"] > 50.0) or 1
+    horas_caidas = sum(1 for f in filas_finales if f["caida"])
     horas_normales_pct = round(max(0.0, ((horas_sol - horas_caidas) / horas_sol) * 100.0), 1)
 
     factor_planta = min(round((total_mwh / (potencia_mw * horas_totales)) * 100.0, 1), 100.0)
     co2_evitado = round(total_mwh * FACTOR_EMISION_SEN, 2)
     arboles_equiv = int(round(co2_evitado / 0.022))
 
-    df_final["dia"] = df_final["fecha_hora"].dt.strftime("%Y-%m-%d")
-    df_diario = df_final.groupby("dia", as_index=False).agg({"mwh": "sum", "temp": "max"})
+    diario_acum: dict[str, dict] = {}
+    for f in filas_finales:
+        dia = f["dia"]
+        if dia not in diario_acum:
+            diario_acum[dia] = {"mwh": 0.0, "temp_max": f["temp"]}
+        diario_acum[dia]["mwh"] += f["mwh"]
+        if f["temp"] > diario_acum[dia]["temp_max"]:
+            diario_acum[dia]["temp_max"] = f["temp"]
 
-    temp_base = round(float(df_diario["temp"].mean()), 1) if not df_diario.empty else 26.5
-    tope_diario_mwh = round(max(float(df_diario["mwh"].max()) * 1.05, potencia_mw * 6.5), 0)
+    dias_ordenados = sorted(diario_acum.keys())
+    diario_mwh = [round(diario_acum[d]["mwh"], 2) for d in dias_ordenados]
+    diario_temp = [round(diario_acum[d]["temp_max"], 1) for d in dias_ordenados]
 
-    df_normales = df_final[(df_final["rad"] > 40) & (~df_final["caida"])].sort_values("mwh", ascending=False).head(60)
-    df_caidas = df_final[df_final["caida"]].sort_values("rad", ascending=False).head(60)
-    df_tabla = pd.concat([df_normales, df_caidas]).drop_duplicates(subset=["fecha_hora"])
+    if diario_temp:
+        temp_base = round(sum(diario_temp) / len(diario_temp), 1)
+    else:
+        temp_base = 26.5
+
+    max_mwh_diario = max(diario_mwh, default=0.0)
+    tope_diario_mwh = round(max(max_mwh_diario * 1.05, potencia_mw * 6.5), 0)
+
+    normales_candidatos = [
+        f for f in filas_finales if (f["rad"] > 40.0) and (not f["caida"])
+    ]
+    normales_candidatos.sort(key=lambda x: x["mwh"], reverse=True)
+    normales_top = normales_candidatos[:60]
+
+    caidas_candidatos = [f for f in filas_finales if f["caida"]]
+    caidas_candidatos.sort(key=lambda x: x["rad"], reverse=True)
+    caidas_top = caidas_candidatos[:60]
+
+    tabla_unicos: dict[datetime, dict] = {}
+    for item in normales_top + caidas_top:
+        tabla_unicos[item["dt"]] = item
 
     registros_tabla = [
         {
-            "fecha": r["fecha_hora"].strftime("%Y-%m-%d %H:00"),
+            "fecha": r["dt"].strftime("%Y-%m-%d %H:00"),
             "mwh": round(float(r["mwh"]), 2),
             "rad": int(round(float(r["rad"]))),
             "temp": round(float(r["temp"]), 1),
             "estado": r["estado"],
             "caida": bool(r["caida"]),
         }
-        for _, r in df_tabla.iterrows()
+        for r in tabla_unicos.values()
+    ]
+
+    dispersion = [
+        {
+            "rad": round(float(f["rad"]), 1),
+            "mwh": round(float(f["mwh"]), 2),
+            "caida": bool(f["caida"]),
+        }
+        for f in filas_finales
+        if f["rad"] > 25.0
     ]
 
     return {
@@ -276,14 +453,11 @@ async def get_dashboard_data(req: DashboardRequest):
             "arboles": f"{arboles_equiv:,}".replace(",", "."),
             "co2_evitado": co2_evitado,
         },
-        "dispersion": [
-            {"rad": round(float(r["rad"]), 1), "mwh": round(float(r["mwh"]), 2), "caida": bool(r["caida"])}
-            for _, r in df_final[df_final["rad"] > 25].iterrows()
-        ],
+        "dispersion": dispersion,
         "diario": {
-            "fechas": df_diario["dia"].tolist(),
-            "mwh": [round(float(v), 2) for v in df_diario["mwh"].tolist()],
-            "temp": [round(float(v), 1) for v in df_diario["temp"].tolist()],
+            "fechas": dias_ordenados,
+            "mwh": diario_mwh,
+            "temp": diario_temp,
             "temp_base": temp_base,
             "tope_diario": int(tope_diario_mwh),
         },

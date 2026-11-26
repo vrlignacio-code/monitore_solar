@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>SolarCEN — Monitor Solar & Huella de Carbono</title>
+  <title>SolarCEN — Monitor Solar &amp; Huella de Carbono</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -535,7 +535,7 @@
   <section id="view-dashboard" class="view-section">
     <div class="container">
       <header class="header">
-        <h1 id="titulo-central">Monitor Solar & Huella de Carbono</h1>
+        <h1 id="titulo-central">Monitor Solar &amp; Huella de Carbono</h1>
         <div class="header-actions">
           <select id="select-central" style="max-width: 280px;"></select>
           <select id="select-periodo">
@@ -564,7 +564,7 @@
       </div>
 
       <section class="chart-card" style="margin-bottom: 20px;">
-        <h4>🗺️ Mapa General de Proyectos en Chile (Coordenadas SEN & SEIA)</h4>
+        <h4>🗺️ Mapa General de Proyectos en Chile (Coordenadas SEN &amp; SEIA)</h4>
         <div class="canvas-holder" style="height: 380px;">
           <div id="mapa-chile-general" style="height: 100%; width: 100%; border-radius: 12px; border: 1px solid #cbd5e1;"></div>
         </div>
@@ -604,7 +604,7 @@
 
         <div class="col-right">
           <div class="card-white">
-            <h3>Potencia Solar & Aporte al Planeta</h3>
+            <h3>Potencia Solar &amp; Aporte al Planeta</h3>
             <div class="earths-container"><span>🌍</span><span>🌍</span><span>🌎</span><span>🌎</span><span>🌏</span></div>
             <div class="badge-sol">☀️ El Sol emitió hasta <span id="val-max-rad">0</span> W/m²</div>
             <div class="tree-equiv">La energía limpia producida equivale al carbono que absorben <strong id="val-arboles">🌲 0 árboles en 1 año</strong></div>
@@ -630,9 +630,9 @@
         </div>
       </div>
 
-      <!-- Top 10 Parques con Mayor Energía Total Generada -->
+      <!-- Top 10 Parques con Mayor Energía Total Generada (Últimos 30 días) -->
       <section class="audit-card" id="top-10-card">
-        <h2>🏆 Top 10 Parques con Mayor Energía Total Generada</h2>
+        <h2>🏆 Top 10 Parques con Mayor Energía Total Generada (Últimos 30 días)</h2>
         <div class="table-scroll" style="max-height: 340px;">
           <table class="audit-table">
             <thead>
@@ -729,7 +729,7 @@
   <footer class="site-footer">
     <div class="footer-inner">
       <div class="footer-copy">
-        <strong>SolarCEN ®</strong> | Monitoreo Solar, Valorización y Huella de Carbono (CEN & Sistemas Distribuidos) | Todos los derechos reservados.
+        <strong>SolarCEN ®</strong> | Monitoreo Solar, Valorización y Huella de Carbono (CEN &amp; Sistemas Distribuidos) | Todos los derechos reservados.
       </div>
       <div class="footer-actions">
         <button class="footer-btn" onclick="cambiarVista('view-dashboard', null)">Dashboard</button>
@@ -824,8 +824,8 @@
 
     async function exportarReporteESG() {
       const estado = document.getElementById('estado-esg');
-      const idCentral = parseInt(document.getElementById('select-central').value) || 0;
-      const dias = parseInt(document.getElementById('select-periodo').value) || 30;
+      const idCentral = parseInt(document.getElementById('select-central').value, 10) || 0;
+      const dias = parseInt(document.getElementById('select-periodo').value, 10) || 30;
       estado.textContent = `Preparando reporte ESG / HuellaChile (${dias} días)...`;
 
       try {
@@ -835,7 +835,7 @@
           body: JSON.stringify({ id_central: idCentral, dias: dias })
         });
         if (!res.ok) {
-          estado.textContent = 'Conecta el endpoint POST /api/reportes/esg-excel en main.py para descargar el Excel.';
+          estado.textContent = 'No se pudo generar el reporte en el servidor.';
           return;
         }
         const blob = await res.blob();
@@ -849,15 +849,22 @@
         window.URL.revokeObjectURL(url);
         estado.textContent = 'Reporte descargado correctamente.';
       } catch (err) {
-        estado.textContent = 'Endpoint de exportación aún no habilitado en el servidor.';
+        estado.textContent = 'Error de conexión al descargar el reporte.';
       }
     }
 
     async function init() {
       iniciarSliderAutomatico();
+
+      const sel = document.getElementById('select-central');
+      const selPeriodo = document.getElementById('select-periodo');
+
+      // Conectar eventos primero para garantizar cambio de parque sin bloqueos
+      sel.addEventListener('change', () => cargarDatos());
+      selPeriodo.addEventListener('change', () => cargarDatos());
+
       const res = await fetch('/api/catalogo');
       catalogoGlobal = await res.json();
-      const sel = document.getElementById('select-central');
       sel.innerHTML = '';
       catalogoGlobal.forEach(c => {
         const opt = document.createElement('option');
@@ -866,43 +873,35 @@
         sel.appendChild(opt);
       });
 
-      const diasInicial = parseInt(document.getElementById('select-periodo').value) || 30;
-      try {
-        const resTop = await fetch(`/api/top-parques?dias=${diasInicial}`, { method: 'POST' });
-        if (resTop.ok) {
-          const topData = await resTop.json();
-          if (topData.id_predeterminado !== undefined) {
-            sel.value = topData.id_predeterminado;
-          }
-        }
-      } catch (_) {}
-
-      sel.addEventListener('change', () => cargarDatos());
-      document.getElementById('select-periodo').addEventListener('change', () => cargarDatos());
+      const idTop1 = await cargarTop10(null);
+      if (idTop1 !== null && sel.querySelector(`option[value="${idTop1}"]`)) {
+        sel.value = idTop1;
+      }
 
       await cargarDatos();
     }
 
-    async function cargarTop10(dias, idSeleccionado) {
+    async function cargarTop10(idSeleccionado) {
       const tbody = document.getElementById('tabla-top-10-body');
       try {
-        const res = await fetch(`/api/top-parques?dias=${dias}`, { method: 'POST' });
+        const res = await fetch('/api/top-parques', { method: 'POST' });
         if (!res.ok) {
           tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:16px; color:#64748b;">No se pudo cargar el ranking de parques.</td></tr>`;
-          return;
+          return null;
         }
         const data = await res.json();
         const lista = data.top_10 || [];
+        const activoId = idSeleccionado !== null ? idSeleccionado : data.id_predeterminado;
         tbody.innerHTML = '';
 
         if (!lista.length) {
-          tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:16px; color:#64748b;">Sin datos de generación en este período.</td></tr>`;
-          return;
+          tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:16px; color:#64748b;">Sin datos de generación en los últimos 30 días.</td></tr>`;
+          return null;
         }
 
         lista.forEach((p, idx) => {
           const tr = document.createElement('tr');
-          const esActual = Number(p.id) === Number(idSeleccionado);
+          const esActual = Number(p.id) === Number(activoId);
           tr.innerHTML = `
             <td><strong>${idx + 1}</strong></td>
             <td><strong>${p.nombre}</strong> ${esActual ? '<span class="estado-ok">(Seleccionado)</span>' : ''}</td>
@@ -918,14 +917,17 @@
           `;
           tbody.appendChild(tr);
         });
+
+        return data.id_predeterminado ?? null;
       } catch (e) {
         console.warn('Error cargando Top 10:', e);
+        return null;
       }
     }
 
     async function cargarDatos() {
-      const idCentral = parseInt(document.getElementById('select-central').value) || 0;
-      const dias = parseInt(document.getElementById('select-periodo').value) || 30;
+      const idCentral = parseInt(document.getElementById('select-central').value, 10) || 0;
+      const dias = parseInt(document.getElementById('select-periodo').value, 10) || 30;
 
       const res = await fetch('/api/dashboard', {
         method: 'POST',
@@ -936,7 +938,7 @@
       datosCargados = true;
       registrosTablaGlobal = data.tabla || [];
       actualizarUI(data);
-      cargarTop10(dias, idCentral);
+      cargarTop10(idCentral);
       if (!mapasInicializados) {
         inicializarMapaChile(catalogoGlobal);
         mapasInicializados = true;

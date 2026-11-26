@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Monitor Solar & Huella de Carbono</title>
+  <title>SolarCEN — Monitor Solar & Huella de Carbono</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -23,86 +23,201 @@
     body { background-color: var(--bg); color: var(--text-main); padding: 12px 15px 28px; }
     .container { max-width: 1100px; margin: 0 auto; }
 
-    /* Barra de navegación responsiva (móvil + escritorio) */
+    /* Barra blanca limpia estilo corporativo */
     .navbar {
-      background: #0f172a;
-      color: #fff;
-      border-radius: 16px;
-      padding: 10px 14px;
-      margin-bottom: 18px;
-      box-shadow: var(--shadow);
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
+      background: #ffffff;
+      border-bottom: 1px solid #e2e8f0;
+      padding: 12px 18px;
+      margin: -12px -15px 18px -15px;
+      position: sticky;
+      top: 0;
+      z-index: 1000;
+      box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
     }
-    .nav-top {
+    .nav-inner {
+      max-width: 1100px;
+      margin: 0 auto;
       display: flex;
       justify-content: space-between;
       align-items: center;
-      gap: 10px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .nav-left {
+      display: flex;
+      align-items: center;
+      gap: 28px;
     }
     .nav-brand {
       font-weight: 800;
-      font-size: 1rem;
-      letter-spacing: -0.01em;
+      font-size: 1.25rem;
+      color: #1b3823;
       display: flex;
       align-items: center;
       gap: 8px;
-      white-space: nowrap;
+      cursor: pointer;
     }
-    .nav-brand span { color: #98b394; font-weight: 700; font-size: 0.82rem; }
     .nav-links {
       display: flex;
-      gap: 8px;
-      overflow-x: auto;
-      -webkit-overflow-scrolling: touch;
-      scrollbar-width: none;
-      padding-bottom: 2px;
+      align-items: center;
+      gap: 20px;
     }
-    .nav-links::-webkit-scrollbar { display: none; }
     .nav-link {
       border: none;
-      background: rgba(255,255,255,0.08);
-      color: #e2e8f0;
-      padding: 8px 13px;
-      border-radius: 10px;
-      font-size: 0.84rem;
-      font-weight: 700;
+      background: transparent;
+      color: #334155;
+      padding: 6px 4px;
+      font-size: 0.92rem;
+      font-weight: 600;
       cursor: pointer;
-      white-space: nowrap;
-      transition: all 0.15s ease;
+      border-radius: 0;
+      transition: color 0.15s ease;
     }
-    .nav-link:hover { background: rgba(255,255,255,0.16); }
-    .nav-link.active {
-      background: #98b394;
-      color: #0f172a;
+    .nav-link:hover, .nav-link.active {
+      color: #3e6b48;
+      font-weight: 700;
+    }
+
+    /* Dropdown "Soluciones ▾" */
+    .nav-dropdown { position: relative; display: inline-block; }
+    .dropdown-menu {
+      display: none;
+      position: absolute;
+      top: 100%;
+      left: 0;
+      min-width: 240px;
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.08);
+      padding: 8px;
+      z-index: 1100;
+    }
+    .nav-dropdown:hover .dropdown-menu,
+    .nav-dropdown.open .dropdown-menu {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .dropdown-item {
+      text-align: left;
+      border: none;
+      background: transparent;
+      padding: 9px 12px;
+      border-radius: 8px;
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: #1e293b;
+      cursor: pointer;
+    }
+    .dropdown-item:hover {
+      background: #f0fdf4;
+      color: #1b3823;
+    }
+
+    /* Botón hamburguesa solo en móvil */
+    .nav-toggle {
+      display: none;
+      background: #f1f5f9;
+      border: none;
+      font-size: 1.25rem;
+      padding: 6px 11px;
+      border-radius: 8px;
+      cursor: pointer;
     }
 
     .view-section { display: none; }
     .view-section.active { display: block; }
 
-    /* Estilos de secciones secundarias */
-    .hero-box {
-      background: linear-gradient(135deg, #1b3823 0%, #3e6b48 100%);
-      color: #fff;
+    /* Hero Slider automático cada 3 segundos */
+    .hero-slider {
+      position: relative;
+      height: 410px;
       border-radius: var(--radius);
-      padding: 24px 22px;
+      overflow: hidden;
+      margin-bottom: 22px;
       box-shadow: var(--shadow);
-      margin-bottom: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      color: #ffffff;
     }
-    .hero-box h2 { font-size: 1.45rem; font-weight: 800; margin-bottom: 10px; line-height: 1.25; }
-    .hero-box p { font-size: 0.94rem; color: #ecfdf5; line-height: 1.5; margin-bottom: 16px; max-width: 780px; }
-    .hero-actions { display: flex; flex-wrap: wrap; gap: 10px; }
-    .btn-primary-light {
-      background: #fff;
-      color: #1b3823;
-      border: none;
+    .hero-slide {
+      position: absolute;
+      inset: 0;
+      background-size: cover;
+      background-position: center;
+      opacity: 0;
+      transition: opacity 0.9s ease-in-out;
+      z-index: 1;
+    }
+    .hero-slide.active { opacity: 1; }
+    .hero-overlay {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, rgba(15, 23, 42, 0.62) 0%, rgba(27, 56, 35, 0.72) 100%);
+      z-index: 2;
+    }
+    .hero-content {
+      position: relative;
+      z-index: 3;
+      max-width: 780px;
+      padding: 0 22px;
+    }
+    .hero-content h2 {
+      font-size: 1.95rem;
       font-weight: 800;
-      padding: 10px 16px;
-      border-radius: 12px;
-      cursor: pointer;
-      font-size: 0.88rem;
+      line-height: 1.22;
+      margin-bottom: 12px;
+      letter-spacing: -0.02em;
     }
+    .hero-content p {
+      font-size: 0.98rem;
+      color: #e2e8f0;
+      line-height: 1.5;
+      margin-bottom: 22px;
+    }
+    .btn-hero-cta {
+      background: #3e6b48;
+      color: #ffffff;
+      border: 1px solid rgba(255,255,255,0.25);
+      padding: 12px 24px;
+      border-radius: 999px;
+      font-size: 0.94rem;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: transform 0.15s ease, background 0.15s ease;
+    }
+    .btn-hero-cta:hover {
+      background: #2d5236;
+      transform: translateY(-1px);
+    }
+    .hero-dots {
+      position: absolute;
+      bottom: 14px;
+      z-index: 3;
+      display: flex;
+      gap: 8px;
+    }
+    .hero-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.45);
+      border: none;
+      padding: 0;
+      cursor: pointer;
+    }
+    .hero-dot.active {
+      background: #ffffff;
+      width: 22px;
+      border-radius: 999px;
+    }
+
     .cards-3 {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
@@ -112,12 +227,12 @@
     .info-card {
       background: #fff;
       border-radius: var(--radius);
-      padding: 18px;
+      padding: 20px;
       box-shadow: var(--shadow);
       border: 1px solid #e2e8f0;
     }
     .info-card h3 { font-size: 1rem; font-weight: 800; color: #1b3823; margin-bottom: 8px; }
-    .info-card p { font-size: 0.86rem; color: #475569; line-height: 1.45; }
+    .info-card p { font-size: 0.88rem; color: #475569; line-height: 1.5; }
 
     .header {
       display: flex;
@@ -128,7 +243,7 @@
       margin-bottom: 16px;
     }
     .header h1 { font-size: 1.35rem; font-weight: 800; color: #0f172a; }
-    .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; width: 100%; justify-content: flex-start; }
+    .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     select, button { font-size: 0.88rem; border-radius: 12px; padding: 9px 14px; border: 1px solid #cbd5e1; background: #fff; outline: none; }
     .btn-mapa { background: #3e6b48; color: #fff; border: none; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
 
@@ -252,12 +367,23 @@
     .estado-ok { color: #1b4332; font-weight: 700; }
     .estado-caida { color: #b91c1c; font-weight: 700; }
 
-    @media (min-width: 821px) {
-      .navbar { flex-direction: row; justify-content: space-between; align-items: center; padding: 12px 18px; }
-      .header-actions { width: auto; justify-content: flex-end; }
-    }
-
     @media (max-width: 820px) {
+      .nav-left { width: 100%; justify-content: space-between; }
+      .nav-toggle { display: block; }
+      .nav-links {
+        display: none;
+        width: 100%;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+        padding-top: 10px;
+        border-top: 1px solid #f1f5f9;
+      }
+      .nav-links.mobile-open { display: flex; }
+      .dropdown-menu { position: static; box-shadow: none; border: none; padding-left: 14px; }
+      .hero-slider { height: 350px; }
+      .hero-content h2 { font-size: 1.4rem; }
+      .hero-content p { font-size: 0.88rem; }
       .grid-top, .grid-bottom, .map-grid, .cards-3 { grid-template-columns: 1fr; }
       #map-view { height: 170px; }
       .sub-card-value { position: static; margin-top: 6px; font-size: 1.4rem; }
@@ -266,34 +392,60 @@
 </head>
 <body>
   <div class="container">
-    <!-- Barra de Navegación Principal -->
-    <nav class="navbar" aria-label="Secciones principales">
-      <div class="nav-top">
-        <div class="nav-brand">☀️ Monitor Solar <span>SEN &amp; Distribuido</span></div>
-      </div>
-      <div class="nav-links">
-        <button class="nav-link active" data-view="view-inicio" onclick="cambiarVista('view-inicio', this)">Inicio</button>
-        <button class="nav-link" data-view="view-nosotros" onclick="cambiarVista('view-nosotros', this)">Nosotros</button>
-        <button class="nav-link" data-view="view-dashboard" onclick="cambiarVista('view-dashboard', this)">Dashboard</button>
-        <button class="nav-link" data-view="view-precio" onclick="cambiarVista('view-precio', this)">Precio Estabilizado</button>
-        <button class="nav-link" data-view="view-esg" onclick="cambiarVista('view-esg', this)">Reportes ESG / HuellaChile</button>
+    <!-- Barra Blanca estilo Corporativo -->
+    <nav class="navbar" aria-label="Navegación principal">
+      <div class="nav-inner">
+        <div class="nav-left">
+          <div class="nav-brand" onclick="cambiarVista('view-inicio', null)">☀️ SolarCEN</div>
+          <button class="nav-toggle" onclick="toggleMobileMenu()" aria-label="Abrir menú">☰</button>
+        </div>
+
+        <div class="nav-links" id="nav-links-container">
+          <button class="nav-link active" data-view="view-inicio" onclick="cambiarVista('view-inicio', this)">Inicio</button>
+          <button class="nav-link" data-view="view-nosotros" onclick="cambiarVista('view-nosotros', this)">Nosotros</button>
+
+          <div class="nav-dropdown" id="dropdown-soluciones">
+            <button class="nav-link" onclick="toggleDropdownSoluciones(event)">Soluciones ▾</button>
+            <div class="dropdown-menu">
+              <button class="dropdown-item" data-view="view-dashboard" onclick="cambiarVista('view-dashboard', this)">📊 Dashboard en Vivo</button>
+              <button class="dropdown-item" data-view="view-precio" onclick="cambiarVista('view-precio', this)">💰 Precio Estabilizado</button>
+              <button class="dropdown-item" data-view="view-esg" onclick="cambiarVista('view-esg', this)">🌍 Reportes ESG / HuellaChile</button>
+            </div>
+          </div>
+
+          <button class="nav-link" data-view="view-contacto" onclick="cambiarVista('view-contacto', this)">Contacto</button>
+        </div>
       </div>
     </nav>
 
-    <!-- 1. INICIO -->
+    <!-- 1. INICIO con Slider automático cada 3 segundos -->
     <section id="view-inicio" class="view-section active">
-      <div class="hero-box">
-        <h2>Inteligencia solar probada en el CEN, ahora en tu proyecto distribuido</h2>
-        <p>Comenzamos analizando datos reales del Coordinador Eléctrico Nacional (CEN) y hoy expandimos nuestra analítica hacia sistemas distribuidos (PMGD y autoconsumo Net Billing) para diagnosticar rendimiento, valorización y huella de carbono.</p>
-        <div class="hero-actions">
-          <button class="btn-primary-light" onclick="irADashboardDemo()">Ver Dashboard con Planta Real</button>
+      <div class="hero-slider">
+        <div class="hero-slide active" style="background-image: url('https://images.unsplash.com/photo-1509391366360-2e959784a276?auto=format&fit=crop&w=1400&q=80');"></div>
+        <div class="hero-slide" style="background-image: url('https://images.unsplash.com/photo-1466611653911-95081537e5b7?auto=format&fit=crop&w=1400&q=80');"></div>
+        <div class="hero-slide" style="background-image: url('https://images.unsplash.com/photo-1508514177221-188b1cf16e9d?auto=format&fit=crop&w=1400&q=80');"></div>
+
+        <div class="hero-overlay"></div>
+
+        <div class="hero-content">
+          <h2>Inteligencia solar para operar con más precisión y menos riesgo</h2>
+          <p>Analizamos datos reales del Coordinador Eléctrico Nacional (CEN) y expandimos nuestra plataforma hacia sistemas distribuidos (PMGD y Net Billing) con trazabilidad operativa y huella de carbono.</p>
+          <button class="btn-hero-cta" onclick="irADashboardDemo()">
+            Explorar Dashboard en Vivo <span>→</span>
+          </button>
+        </div>
+
+        <div class="hero-dots">
+          <button class="hero-dot active" onclick="irASlide(0)" aria-label="Imagen 1"></button>
+          <button class="hero-dot" onclick="irASlide(1)" aria-label="Imagen 2"></button>
+          <button class="hero-dot" onclick="irASlide(2)" aria-label="Imagen 3"></button>
         </div>
       </div>
 
       <div class="cards-3">
         <div class="info-card">
           <h3>📊 Dashboard Operativo</h3>
-          <p>Visualiza energía generada, factor de planta, irradiancia, mapa de proyectos en Chile y detección de caídas a pleno sol.</p>
+          <p>Monitoreo de energía generada, factor de planta, irradiancia, mapa de proyectos en Chile y detección de caídas a pleno sol.</p>
         </div>
         <div class="info-card">
           <h3>💰 Precio Estabilizado</h3>
@@ -308,13 +460,13 @@
 
     <!-- 2. NOSOTROS -->
     <section id="view-nosotros" class="view-section">
-      <div class="info-card" style="margin-bottom: 18px;">
+      <div class="info-card">
         <h2 style="font-size: 1.25rem; font-weight: 800; color: #1b3823; margin-bottom: 10px;">Nosotros: De la Red Nacional a los Sistemas Distribuidos</h2>
         <p style="font-size: 0.92rem; color: #334155; line-height: 1.55; margin-bottom: 10px;">
-          Nuestra plataforma nació analizando el desempeño de centrales solares conectadas al Sistema Eléctrico Nacional (CEN), cruzando generación real con datos meteorológicos de irradiancia y temperatura.
+          Comenzamos analizando el desempeño de centrales solares conectadas al Sistema Eléctrico Nacional (CEN), cruzando generación real con datos meteorológicos de irradiancia y temperatura.
         </p>
         <p style="font-size: 0.92rem; color: #334155; line-height: 1.55;">
-          Nuestro objetivo es expandir este estándar analítico hacia los <strong>sistemas distribuidos</strong> (PMGD y autoconsumo), entregando diagnósticos claros, métricas ambientales trazables y herramientas de valorización pensadas para propietarios y gestores de proyectos.
+          Buscamos expandirnos hacia los <strong>sistemas distribuidos</strong> para llevar este mismo nivel de diagnóstico, valorización y trazabilidad ambiental a proyectos de menor escala y autoconsumo.
         </p>
       </div>
     </section>
@@ -322,7 +474,7 @@
     <!-- 3. DASHBOARD -->
     <section id="view-dashboard" class="view-section">
       <header class="header">
-        <h1 id="titulo-central">Monitor Solar &amp; Huella de Carbono</h1>
+        <h1 id="titulo-central">Monitor Solar & Huella de Carbono</h1>
         <div class="header-actions">
           <select id="select-central" style="max-width: 280px;"></select>
           <select id="select-periodo">
@@ -352,8 +504,8 @@
 
       <!-- Mapa General de Chile con Todos los Proyectos -->
       <section class="chart-card" style="margin-bottom: 20px;">
-        <h4>🗺️ Mapa General de Proyectos en Chile (Coordenadas SEN &amp; SEIA)</h4>
-        <div class="canvas-holder" style="height: 360px;">
+        <h4>🗺️ Mapa General de Proyectos en Chile (Coordenadas SEN & SEIA)</h4>
+        <div class="canvas-holder" style="height: 380px;">
           <div id="mapa-chile-general" style="height: 100%; width: 100%; border-radius: 12px; border: 1px solid #cbd5e1;"></div>
         </div>
       </section>
@@ -392,7 +544,7 @@
 
         <div class="col-right">
           <div class="card-white">
-            <h3>Potencia Solar &amp; Aporte al Planeta</h3>
+            <h3>Potencia Solar & Aporte al Planeta</h3>
             <div class="earths-container"><span>🌍</span><span>🌍</span><span>🌎</span><span>🌎</span><span>🌏</span></div>
             <div class="badge-sol">☀️ El Sol emitió hasta <span id="val-max-rad">0</span> W/m²</div>
             <div class="tree-equiv">La energía limpia producida equivale al carbono que absorben <strong id="val-arboles">🌲 0 árboles en 1 año</strong></div>
@@ -449,11 +601,11 @@
     <section id="view-precio" class="view-section">
       <div class="info-card">
         <h2 style="font-size: 1.25rem; font-weight: 800; color: #1b3823; margin-bottom: 10px;">💰 Precio Estabilizado y Valorización</h2>
-        <p style="font-size: 0.9rem; color: #475569; line-height: 1.5; margin-bottom: 12px;">
-          Módulo dedicado a analizar la valorización de la generación solar (enfoque PMGD / sistemas distribuidos) frente a variaciones de Costo Marginal y horas de alta oferta solar.
+        <p style="font-size: 0.9rem; color: #475569; line-height: 1.5; margin-bottom: 10px;">
+          Sección dedicada a la valorización de energía para proyectos de generación distribuida (PMGD / sistemas distribuidos) frente a variaciones del Costo Marginal y escenarios de alta producción solar.
         </p>
-        <p style="font-size: 0.85rem; color: #64748b;">
-          * Próxima integración con el endpoint de valorización en tu backend FastAPI.
+        <p style="font-size: 0.84rem; color: #64748b;">
+          Lista para conectar con tu endpoint de valorización en FastAPI.
         </p>
       </div>
     </section>
@@ -463,12 +615,22 @@
       <div class="info-card">
         <h2 style="font-size: 1.25rem; font-weight: 800; color: #1b3823; margin-bottom: 10px;">🌍 Reportes ESG / HuellaChile</h2>
         <p style="font-size: 0.9rem; color: #475569; line-height: 1.5; margin-bottom: 14px;">
-          Utiliza el botón <strong>Exportar Reporte Mensual ESG / HuellaChile</strong> (para períodos de 7, 15 o 30 días) para descargar un respaldo estructurado de generación y <strong>tCO₂eq evitadas</strong> (factor oficial 0,27 tCO₂eq/MWh) como valor de respaldo para informes de sostenibilidad, reportes corporativos o postulaciones ambientales.
+          Usa el botón <strong>Exportar Reporte Mensual ESG / HuellaChile</strong> (para períodos de 7, 15 o 30 días) para descargar un reporte estructurado de generación y <strong>tCO₂eq evitadas</strong> (factor oficial 0,27 tCO₂eq/MWh) como respaldo para informes de sostenibilidad, reportes corporativos o postulaciones ambientales.
         </p>
         <button id="btn-exportar-esg" class="btn-mapa" onclick="exportarReporteESG()">
           📥 Exportar Reporte Mensual ESG / HuellaChile
         </button>
         <p id="estado-esg" style="font-size: 0.82rem; color: #64748b; margin-top: 10px;"></p>
+      </div>
+    </section>
+
+    <!-- 6. CONTACTO -->
+    <section id="view-contacto" class="view-section">
+      <div class="info-card">
+        <h2 style="font-size: 1.25rem; font-weight: 800; color: #1b3823; margin-bottom: 10px;">Contacto y Demos para Sistemas Distribuidos</h2>
+        <p style="font-size: 0.9rem; color: #475569; line-height: 1.5;">
+          ¿Tienes una planta solar distribuida o buscas adaptar este monitoreo a tu proyecto? Escríbenos para coordinar una demostración.
+        </p>
       </div>
     </section>
   </div>
@@ -478,6 +640,42 @@
     let mapaChileGeneral = null;
     let registrosTablaGlobal = [], mostrarSoloCaidas = false;
     let datosCargados = false, mapasInicializados = false;
+    let slideActual = 0, intervaloSlider = null;
+
+    function mostrarSlide(index) {
+      const slides = document.querySelectorAll('.hero-slide');
+      const dots = document.querySelectorAll('.hero-dot');
+      if (!slides.length) return;
+      slideActual = (index + slides.length) % slides.length;
+      slides.forEach((s, i) => s.classList.toggle('active', i === slideActual));
+      dots.forEach((d, i) => d.classList.toggle('active', i === slideActual));
+    }
+
+    function iniciarSliderAutomatico() {
+      if (intervaloSlider) clearInterval(intervaloSlider);
+      intervaloSlider = setInterval(() => {
+        mostrarSlide(slideActual + 1);
+      }, 3000);
+    }
+
+    function irASlide(index) {
+      mostrarSlide(index);
+      iniciarSliderAutomatico();
+    }
+
+    function toggleMobileMenu() {
+      document.getElementById('nav-links-container').classList.toggle('mobile-open');
+    }
+
+    function toggleDropdownSoluciones(e) {
+      e.stopPropagation();
+      document.getElementById('dropdown-soluciones').classList.toggle('open');
+    }
+
+    document.addEventListener('click', () => {
+      const dd = document.getElementById('dropdown-soluciones');
+      if (dd) dd.classList.remove('open');
+    });
 
     function cambiarVista(viewId, btnEl) {
       document.querySelectorAll('.view-section').forEach(sec => sec.classList.remove('active'));
@@ -485,12 +683,20 @@
       if (target) target.classList.add('active');
 
       document.querySelectorAll('.nav-link').forEach(b => b.classList.remove('active'));
-      if (btnEl) {
+      if (btnEl && btnEl.classList.contains('nav-link')) {
         btnEl.classList.add('active');
       } else {
         const matchBtn = document.querySelector(`.nav-link[data-view="${viewId}"]`);
-        if (matchBtn) matchBtn.classList.add('active');
+        if (matchBtn) {
+          matchBtn.classList.add('active');
+        } else if (['view-dashboard', 'view-precio', 'view-esg'].includes(viewId)) {
+          const ddBtn = document.querySelector('#dropdown-soluciones > .nav-link');
+          if (ddBtn) ddBtn.classList.add('active');
+        }
       }
+
+      document.getElementById('nav-links-container').classList.remove('mobile-open');
+      document.getElementById('dropdown-soluciones').classList.remove('open');
 
       if (viewId === 'view-dashboard') {
         if (!datosCargados) {
@@ -543,6 +749,7 @@
     }
 
     async function init() {
+      iniciarSliderAutomatico();
       const res = await fetch('/api/catalogo');
       catalogoGlobal = await res.json();
       const sel = document.getElementById('select-central');

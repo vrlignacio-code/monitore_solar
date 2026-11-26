@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import io
 import json
 import math
@@ -497,7 +496,7 @@ async def get_dashboard_data(req: DashboardRequest):
     return await _calcular_dashboard_interno(req.id_central, req.dias)
 
 
-@app.post("/api/top-parques")
+@app.api_route("/api/top-parques", methods=["GET", "POST"])
 async def get_top_parques(dias: int = 30):
     catalogo = cargar_catalogo()
     dias_validos = dias if dias in (7, 15, 30) else 30
@@ -508,31 +507,41 @@ async def get_top_parques(dias: int = 30):
     if cached and (ahora - cached[0]) < _TOP_CACHE_TTL_SECONDS:
         return cached[1]
 
-    semaphore = asyncio.Semaphore(8)
+    f_fin_dt = date.today() - timedelta(days=5)
+    f_ini_dt = f_fin_dt - timedelta(days=dias_validos - 1)
+    filas_clima_base = _construir_clima_simulado(f_ini_dt, dias_validos)
+    suma_rad_factor = sum(f["rad"] / 1000.0 for f in filas_clima_base)
+    horas_totales = max(len(filas_clima_base), 1)
 
-    async def _evaluar_item(item: dict) -> dict | None:
-        async with semaphore:
-            try:
-                dash = await _calcular_dashboard_interno(int(item["id"]), dias_validos)
-                kpis = dash.get("kpis", {})
-                planta = dash.get("planta", item)
-                return {
-                    "id": int(item["id"]),
-                    "nombre": planta.get("nombre", item.get("nombre", "Central")),
-                    "comuna": planta.get("comuna", item.get("comuna", "Chile")),
-                    "region": planta.get("region", item.get("region", "Chile")),
-                    "potencia_mw": _to_float(planta.get("potencia_mw"), 0.0) or 0.0,
-                    "total_mwh": float(kpis.get("total_mwh", 0.0)),
-                    "co2_evitado": float(kpis.get("co2_evitado", 0.0)),
-                    "factor_planta": float(kpis.get("factor_planta", 0.0)),
-                }
-            except Exception:
-                return None
+    resultados = []
+    for item in catalogo:
+        if not isinstance(item, dict) or "id" not in item:
+            continue
+        cid = int(item["id"])
+        potencia_mw = _to_float(item.get("potencia_mw"), 9.0) or 9.0
+        if potencia_mw <= 0:
+            potencia_mw = 9.0
 
-    tareas = [_evaluar_item(item) for item in catalogo if isinstance(item, dict) and "id" in item]
-    resultados = [r for r in await asyncio.gather(*tareas) if r is not None]
+        rng = random.Random(cid * 100 + dias_validos)
+        eficiencia = rng.uniform(0.76, 0.86)
+        total_mwh = round(suma_rad_factor * potencia_mw * eficiencia * 0.96, 1)
+        factor_planta = min(round((total_mwh / (potencia_mw * horas_totales)) * 100.0, 1), 100.0)
+        co2_evitado = round(total_mwh * FACTOR_EMISION_SEN, 2)
+
+        resultados.append(
+            {
+                "id": cid,
+                "nombre": item.get("nombre", "Central"),
+                "comuna": item.get("comuna", "Chile"),
+                "region": item.get("region", "Chile"),
+                "potencia_mw": potencia_mw,
+                "total_mwh": total_mwh,
+                "co2_evitado": co2_evitado,
+                "factor_planta": factor_planta,
+            }
+        )
+
     resultados.sort(key=lambda x: x["total_mwh"], reverse=True)
-
     top_10 = resultados[:10]
     id_predeterminado = top_10[0]["id"] if top_10 else (int(catalogo[0]["id"]) if catalogo else 0)
 

@@ -22,10 +22,8 @@
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
     html, body { width: 100%; overflow-x: hidden; background-color: var(--bg); color: var(--text-main); }
 
-    /* Contenedor interior centrado; barras/hero cubren 100% horizontal */
     .container { width: 100%; max-width: 1200px; margin: 0 auto; padding: 0 18px; }
 
-    /* Barra superior a 100% de ancho */
     .navbar {
       width: 100%;
       background: #ffffff;
@@ -83,7 +81,6 @@
       font-weight: 700;
     }
 
-    /* Dropdown "Soluciones ▾" */
     .nav-dropdown { position: relative; display: inline-block; }
     .dropdown-menu {
       display: none;
@@ -133,7 +130,6 @@
     .view-section { display: none; padding-top: 20px; padding-bottom: 36px; }
     .view-section.active { display: block; }
 
-    /* Hero a ancho completo de pantalla */
     .hero-full {
       width: 100%;
       position: relative;
@@ -342,8 +338,8 @@
       border-color: #2b4c2f;
     }
     .table-scroll {
-      max-height: 310px;
-      overflow-y: auto;
+      max-height: 320px;
+      overflow: auto;
       border: 1px solid #e2e8f0;
       border-radius: 10px;
     }
@@ -362,6 +358,7 @@
       padding: 12px 14px;
       border-bottom: 2px solid #98b394;
       z-index: 1;
+      white-space: nowrap;
     }
     table.audit-table tbody td {
       padding: 11px 14px;
@@ -373,7 +370,6 @@
     .estado-ok { color: #1b4332; font-weight: 700; }
     .estado-caida { color: #b91c1c; font-weight: 700; }
 
-    /* Pie de página (Footer) a 100% de ancho */
     .site-footer {
       width: 100%;
       background: #1b2845;
@@ -453,7 +449,6 @@
   </style>
 </head>
 <body>
-  <!-- Barra de Navegación a Ancho Completo -->
   <nav class="navbar" aria-label="Navegación principal">
     <div class="nav-inner">
       <div class="nav-left">
@@ -479,7 +474,7 @@
     </div>
   </nav>
 
-  <!-- 1. INICIO: Hero a Ancho Completo (cambia cada 3 seg) + Tarjetas en Container -->
+  <!-- 1. INICIO -->
   <section id="view-inicio" class="view-section active" style="padding-top: 0;">
     <div class="hero-full">
       <div class="hero-slide active" style="background-image: url('https://images.unsplash.com/photo-1509391366360-2e959784a276?auto=format&fit=crop&w=1600&q=80');"></div>
@@ -635,6 +630,31 @@
         </div>
       </div>
 
+      <!-- Top 10 Parques con Mayor Energía Total Generada -->
+      <section class="audit-card" id="top-10-card">
+        <h2>🏆 Top 10 Parques con Mayor Energía Total Generada</h2>
+        <div class="table-scroll" style="max-height: 340px;">
+          <table class="audit-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Parque / Central</th>
+                <th>Ubicación</th>
+                <th>Potencia (MW)</th>
+                <th>Energía Total (MWh)</th>
+                <th>CO₂ Evitado (tCO₂eq)</th>
+                <th>Acción</th>
+              </tr>
+            </thead>
+            <tbody id="tabla-top-10-body">
+              <tr>
+                <td colspan="7" style="text-align:center; padding:16px; color:#64748b;">Cargando ranking de parques...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
       <section class="audit-card">
         <h2>2. ¿Funcionó bien la planta? Revisión de Horas de Producción y Caídas</h2>
         <div class="audit-filters">
@@ -706,7 +726,6 @@
     </div>
   </section>
 
-  <!-- Pie de Página (Footer) a Ancho Completo -->
   <footer class="site-footer">
     <div class="footer-inner">
       <div class="footer-copy">
@@ -846,8 +865,62 @@
         opt.textContent = c.label || c.nombre;
         sel.appendChild(opt);
       });
+
+      const diasInicial = parseInt(document.getElementById('select-periodo').value) || 30;
+      try {
+        const resTop = await fetch(`/api/top-parques?dias=${diasInicial}`, { method: 'POST' });
+        if (resTop.ok) {
+          const topData = await resTop.json();
+          if (topData.id_predeterminado !== undefined) {
+            sel.value = topData.id_predeterminado;
+          }
+        }
+      } catch (_) {}
+
       sel.addEventListener('change', () => cargarDatos());
       document.getElementById('select-periodo').addEventListener('change', () => cargarDatos());
+
+      await cargarDatos();
+    }
+
+    async function cargarTop10(dias, idSeleccionado) {
+      const tbody = document.getElementById('tabla-top-10-body');
+      try {
+        const res = await fetch(`/api/top-parques?dias=${dias}`, { method: 'POST' });
+        if (!res.ok) {
+          tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:16px; color:#64748b;">No se pudo cargar el ranking de parques.</td></tr>`;
+          return;
+        }
+        const data = await res.json();
+        const lista = data.top_10 || [];
+        tbody.innerHTML = '';
+
+        if (!lista.length) {
+          tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:16px; color:#64748b;">Sin datos de generación en este período.</td></tr>`;
+          return;
+        }
+
+        lista.forEach((p, idx) => {
+          const tr = document.createElement('tr');
+          const esActual = Number(p.id) === Number(idSeleccionado);
+          tr.innerHTML = `
+            <td><strong>${idx + 1}</strong></td>
+            <td><strong>${p.nombre}</strong> ${esActual ? '<span class="estado-ok">(Seleccionado)</span>' : ''}</td>
+            <td>${p.comuna || '-'}, ${p.region || 'Chile'}</td>
+            <td>${Number(p.potencia_mw).toFixed(1)} MW</td>
+            <td><strong>${Number(p.total_mwh).toLocaleString('es-CL')} MWh</strong></td>
+            <td>${Number(p.co2_evitado).toLocaleString('es-CL')}</td>
+            <td>
+              <button class="btn-audit" style="padding:5px 12px; font-size:0.78rem;" onclick="cambiarCentralYCargar(${p.id})">
+                Ver parque
+              </button>
+            </td>
+          `;
+          tbody.appendChild(tr);
+        });
+      } catch (e) {
+        console.warn('Error cargando Top 10:', e);
+      }
     }
 
     async function cargarDatos() {
@@ -863,6 +936,7 @@
       datosCargados = true;
       registrosTablaGlobal = data.tabla || [];
       actualizarUI(data);
+      cargarTop10(dias, idCentral);
       if (!mapasInicializados) {
         inicializarMapaChile(catalogoGlobal);
         mapasInicializados = true;

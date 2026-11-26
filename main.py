@@ -1,18 +1,26 @@
 from __future__ import annotations
 
+import asyncio
+import io
 import json
 import math
 import os
 import random
 import re
+import time
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 
 import httpx
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+
+try:
+    from openpyxl import Workbook
+except ImportError:  # pragma: no cover
+    Workbook = None
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 FACTOR_EMISION_SEN = 0.27  # tCO2eq / MWh
@@ -39,9 +47,11 @@ INDEX_FILE = os.path.join(STATIC_DIR, "index.html")
 if os.path.exists(STATIC_DIR):
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-# Caché en memoria para evitar leer y parsear catalogo_completo.json en cada petición
+# Caché en memoria para catálogo y ranking Top 10
 _CATALOGO_CACHE: list[dict] | None = None
 _CATALOGO_POR_ID: dict[int, dict] = {}
+_TOP_PARQUES_CACHE: dict[tuple[int, str], tuple[float, dict]] = {}
+_TOP_CACHE_TTL_SECONDS = 1800  # 30 minutos
 
 
 class DashboardRequest(BaseModel):
@@ -165,9 +175,8 @@ def _construir_clima_simulado(f_ini_dt: date, dias: int) -> list[dict]:
     return filas
 
 
-@app.post("/api/dashboard")
-async def get_dashboard_data(req: DashboardRequest):
-    planta = obtener_planta(req.id_central)
+async def _calcular_dashboard_interno(id_central: int, dias: int) -> dict:
+    planta = obtener_planta(id_central)
     potencia_mw = _to_float(planta.get("potencia_mw"), 9.0) or 9.0
     if potencia_mw <= 0:
         potencia_mw = 9.0
@@ -180,10 +189,10 @@ async def get_dashboard_data(req: DashboardRequest):
     if lon is None or not (-76.0 <= lon <= -66.0):
         lon = -71.72309
 
-    dias = req.dias if req.dias in (7, 15, 30) else 30
+    dias_validos = dias if dias in (7, 15, 30) else 30
 
     f_fin_dt = date.today() - timedelta(days=5)
-    f_ini_dt = f_fin_dt - timedelta(days=dias - 1)
+    f_ini_dt = f_fin_dt - timedelta(days=dias_validos - 1)
     f_ini, f_fin = f_ini_dt.isoformat(), f_fin_dt.isoformat()
 
     clima_por_hora: dict[datetime, dict] = {}
@@ -207,14 +216,10 @@ async def get_dashboard_data(req: DashboardRequest):
                     raw_temps = hourly.get("temperature_2m") or []
 
                     temps_limpias: list[float] = []
-                    ultimo_temp: float | None = None
                     for t_raw in raw_temps:
                         val_t = _to_float(t_raw)
-                        if val_t is not None:
-                            ultimo_temp = val_t
                         temps_limpias.append(val_t if val_t is not None else -999.0)
 
-                    # Relleno hacia adelante y atrás (ffill / bfill) igual que pandas
                     primer_valido = next((x for x in temps_limpias if x != -999.0), 20.0)
                     actual = primer_valido
                     for idx, val_t in enumerate(temps_limpias):
@@ -238,7 +243,7 @@ async def get_dashboard_data(req: DashboardRequest):
     if clima_por_hora:
         filas_clima = [clima_por_hora[k] for k in sorted(clima_por_hora.keys())]
     else:
-        filas_clima = _construir_clima_simulado(f_ini_dt, dias)
+        filas_clima = _construir_clima_simulado(f_ini_dt, dias_validos)
 
     sen_por_hora: dict[datetime, float] = {}
     nombre_especifico = limpiar_nombre_planta(str(planta.get("nombre", "")))
@@ -305,7 +310,7 @@ async def get_dashboard_data(req: DashboardRequest):
                             agrupado_sen[fh] += gen_val
 
                         horas_positivas = sum(1 for v in agrupado_sen.values() if v > 0.0)
-                        if horas_positivas >= (dias * 4) and agrupado_sen:
+                        if horas_positivas >= (dias_validos * 4) and agrupado_sen:
                             max_sen = max(agrupado_sen.values())
                             escala = (potencia_mw * 0.92) / max_sen if max_sen > potencia_mw * 1.15 else 1.0
                             for fh, val in agrupado_sen.items():
@@ -313,7 +318,7 @@ async def get_dashboard_data(req: DashboardRequest):
     except Exception as e:
         print(f"[INFO] API SEN consulta: {e}")
 
-    rng = random.Random(int(_to_float(planta.get("id"), 0.0) or 0.0) * 100 + dias)
+    rng = random.Random(int(_to_float(planta.get("id"), 0.0) or 0.0) * 100 + dias_validos)
     eficiencia_planta = rng.uniform(0.76, 0.86)
 
     filas_finales: list[dict] = []
@@ -387,26 +392,24 @@ async def get_dashboard_data(req: DashboardRequest):
     for f in filas_finales:
         dia = f["dia"]
         if dia not in diario_acum:
-            diario_acum[dia] = {"mwh": 0.0, "temp_max": f["temp"]}
+            diario_acum[dia] = {"mwh": 0.0, "temp_max": f["temp"], "rad_max": f["rad"], "horas_caida": 0}
         diario_acum[dia]["mwh"] += f["mwh"]
         if f["temp"] > diario_acum[dia]["temp_max"]:
             diario_acum[dia]["temp_max"] = f["temp"]
+        if f["rad"] > diario_acum[dia]["rad_max"]:
+            diario_acum[dia]["rad_max"] = f["rad"]
+        if f["caida"]:
+            diario_acum[dia]["horas_caida"] += 1
 
     dias_ordenados = sorted(diario_acum.keys())
     diario_mwh = [round(diario_acum[d]["mwh"], 2) for d in dias_ordenados]
     diario_temp = [round(diario_acum[d]["temp_max"], 1) for d in dias_ordenados]
 
-    if diario_temp:
-        temp_base = round(sum(diario_temp) / len(diario_temp), 1)
-    else:
-        temp_base = 26.5
-
+    temp_base = round(sum(diario_temp) / len(diario_temp), 1) if diario_temp else 26.5
     max_mwh_diario = max(diario_mwh, default=0.0)
     tope_diario_mwh = round(max(max_mwh_diario * 1.05, potencia_mw * 6.5), 0)
 
-    normales_candidatos = [
-        f for f in filas_finales if (f["rad"] > 40.0) and (not f["caida"])
-    ]
+    normales_candidatos = [f for f in filas_finales if (f["rad"] > 40.0) and (not f["caida"])]
     normales_candidatos.sort(key=lambda x: x["mwh"], reverse=True)
     normales_top = normales_candidatos[:60]
 
@@ -442,6 +445,7 @@ async def get_dashboard_data(req: DashboardRequest):
 
     return {
         "planta": planta,
+        "periodo": {"dias": dias_validos, "fecha_inicio": f_ini, "fecha_fin": f_fin},
         "kpis": {
             "total_mwh": round(total_mwh, 1),
             "factor_planta": factor_planta,
@@ -451,6 +455,7 @@ async def get_dashboard_data(req: DashboardRequest):
             "horas_caidas": horas_caidas,
             "max_rad": int(round(max_rad)),
             "arboles": f"{arboles_equiv:,}".replace(",", "."),
+            "arboles_num": arboles_equiv,
             "co2_evitado": co2_evitado,
         },
         "dispersion": dispersion,
@@ -460,6 +465,150 @@ async def get_dashboard_data(req: DashboardRequest):
             "temp": diario_temp,
             "temp_base": temp_base,
             "tope_diario": int(tope_diario_mwh),
+            "detalle": [
+                {
+                    "fecha": d,
+                    "mwh": round(diario_acum[d]["mwh"], 2),
+                    "rad_max": int(round(diario_acum[d]["rad_max"])),
+                    "temp_max": round(diario_acum[d]["temp_max"], 1),
+                    "horas_caida": diario_acum[d]["horas_caida"],
+                    "co2_evitado": round(diario_acum[d]["mwh"] * FACTOR_EMISION_SEN, 2),
+                }
+                for d in dias_ordenados
+            ],
         },
         "tabla": registros_tabla,
+        "horaria": [
+            {
+                "fecha_hora": f["dt"].strftime("%Y-%m-%d %H:00"),
+                "mwh": round(float(f["mwh"]), 3),
+                "rad": round(float(f["rad"]), 1),
+                "temp": round(float(f["temp"]), 1),
+                "estado": f["estado"],
+                "co2_evitado": round(float(f["mwh"]) * FACTOR_EMISION_SEN, 4),
+            }
+            for f in filas_finales
+        ],
     }
+
+
+@app.post("/api/dashboard")
+async def get_dashboard_data(req: DashboardRequest):
+    return await _calcular_dashboard_interno(req.id_central, req.dias)
+
+
+@app.post("/api/top-parques")
+async def get_top_parques(dias: int = 30):
+    catalogo = cargar_catalogo()
+    dias_validos = dias if dias in (7, 15, 30) else 30
+    cache_key = (dias_validos, date.today().isoformat())
+    ahora = time.time()
+
+    cached = _TOP_PARQUES_CACHE.get(cache_key)
+    if cached and (ahora - cached[0]) < _TOP_CACHE_TTL_SECONDS:
+        return cached[1]
+
+    semaphore = asyncio.Semaphore(8)
+
+    async def _evaluar_item(item: dict) -> dict | None:
+        async with semaphore:
+            try:
+                dash = await _calcular_dashboard_interno(int(item["id"]), dias_validos)
+                kpis = dash.get("kpis", {})
+                planta = dash.get("planta", item)
+                return {
+                    "id": int(item["id"]),
+                    "nombre": planta.get("nombre", item.get("nombre", "Central")),
+                    "comuna": planta.get("comuna", item.get("comuna", "Chile")),
+                    "region": planta.get("region", item.get("region", "Chile")),
+                    "potencia_mw": _to_float(planta.get("potencia_mw"), 0.0) or 0.0,
+                    "total_mwh": float(kpis.get("total_mwh", 0.0)),
+                    "co2_evitado": float(kpis.get("co2_evitado", 0.0)),
+                    "factor_planta": float(kpis.get("factor_planta", 0.0)),
+                }
+            except Exception:
+                return None
+
+    tareas = [_evaluar_item(item) for item in catalogo if isinstance(item, dict) and "id" in item]
+    resultados = [r for r in await asyncio.gather(*tareas) if r is not None]
+    resultados.sort(key=lambda x: x["total_mwh"], reverse=True)
+
+    top_10 = resultados[:10]
+    id_predeterminado = top_10[0]["id"] if top_10 else (int(catalogo[0]["id"]) if catalogo else 0)
+
+    payload = {
+        "dias": dias_validos,
+        "id_predeterminado": id_predeterminado,
+        "top_10": top_10,
+    }
+    _TOP_PARQUES_CACHE[cache_key] = (ahora, payload)
+    return payload
+
+
+@app.post("/api/reportes/esg-excel")
+async def exportar_reporte_esg_excel(req: DashboardRequest):
+    if Workbook is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Falta instalar 'openpyxl' en el entorno para generar archivos .xlsx.",
+        )
+
+    dash = await _calcular_dashboard_interno(req.id_central, req.dias)
+    planta = dash["planta"]
+    kpis = dash["kpis"]
+    periodo = dash["periodo"]
+
+    wb = Workbook()
+
+    # Pestaña 1: Resumen Ejecutivo
+    ws_res = wb.active
+    ws_res.title = "Resumen Ejecutivo"
+    ws_res.append(["Campo", "Valor"])
+    ws_res.append(["Central / Planta", planta.get("nombre", "Central")])
+    ws_res.append(["Ubicación", f"{planta.get('comuna', '-')}, {planta.get('region', 'Chile')}"])
+    ws_res.append(["Potencia Instalada (MW)", _to_float(planta.get("potencia_mw"), 0.0) or 0.0])
+    ws_res.append(["Período (días)", periodo["dias"]])
+    ws_res.append(["Fecha Inicio", periodo["fecha_inicio"]])
+    ws_res.append(["Fecha Fin", periodo["fecha_fin"]])
+    ws_res.append(["Energía Total Generada (MWh)", kpis["total_mwh"]])
+    ws_res.append(["Factor de Planta (%)", kpis["factor_planta"]])
+    ws_res.append(["Factor de Emisión SEN (tCO2eq/MWh)", FACTOR_EMISION_SEN])
+    ws_res.append(["Huella de CO2 Evitada (tCO2eq)", kpis["co2_evitado"]])
+    ws_res.append(["Árboles Equivalentes (1 año)", kpis["arboles_num"]])
+
+    # Pestaña 2: Detalle Diario
+    ws_dia = wb.create_sheet(title="Detalle Diario")
+    ws_dia.append(["Fecha", "Energía (MWh)", "Irradiancia Máx (W/m2)", "Temp. Máx (°C)", "Horas Caída", "CO2 Evitado (tCO2eq)"])
+    for d in dash["diario"].get("detalle", []):
+        ws_dia.append([
+            d["fecha"],
+            d["mwh"],
+            d["rad_max"],
+            d["temp_max"],
+            d["horas_caida"],
+            d["co2_evitado"],
+        ])
+
+    # Pestaña 3: Trazabilidad Horaria
+    ws_hor = wb.create_sheet(title="Trazabilidad Horaria")
+    ws_hor.append(["Fecha y Hora", "Energía (MWh)", "Luz Solar (W/m2)", "Temperatura (°C)", "Estado", "CO2 Evitado (tCO2eq)"])
+    for h in dash.get("horaria", []):
+        ws_hor.append([
+            h["fecha_hora"],
+            h["mwh"],
+            h["rad"],
+            h["temp"],
+            h["estado"],
+            h["co2_evitado"],
+        ])
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+
+    filename = f"reporte_esg_huellachile_{periodo['dias']}d.xlsx"
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
